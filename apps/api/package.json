@@ -1,0 +1,30 @@
+{
+  "name": "api",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "build": "tsc --noEmit",
+    "start": "tsx src/index.ts",
+    "lint": "oxlint -c ../../.oxlintrc.json .",
+    "lint:fix": "oxlint -c ../../.oxlintrc.json --fix .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^3.0.30",
+    "@hono/node-server": "^1.19.6",
+    "@octokit/auth-app": "^8.1.1",
+    "@workspace/shared": "workspace:*",
+    "ai": "^6.0.97",
+    "hono": "^4.10.6",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^25.1.0",
+    "@workspace/typescript-config": "workspace:*",
+    "oxlint": "^1.49.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

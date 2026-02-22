@@ -1,0 +1,354 @@
+import { createOpenAI } from "@ai-sdk/openai";
+import { generateText, stepCountIs, tool } from "ai";
+import type { SuggestionCandidate, SuggestionResult } from "@workspace/shared";
+import { z } from "zod";
+import type { GenerateReviewingCommentInput, GenerateSuggestionInput, ReviewLlmProvider } from "./types";
+
+const ALL_TOOL_NAMES = ["list_dir", "get_changed_files", "read_file", "search_text"] as const;
+
+function buildSystemPrompt(): string {
+  return [
+    "You are a comprehensive pull request reviewer.",
+    "Goal: find actionable issues across correctness, security, reliability, performance, and maintainability.",
+    "Then propose tiny and safe GitHub suggested changes.",
+    "Hard constraints:",
+    "- First tool call must be list_dir(path='.', depth=3).",
+    "- Only target added ('+') lines in diffs.",
+    "- Do not propose out-of-diff edits.",
+    "- 1 suggestion code block must be <= 10 lines.",
+    "- If multiple high-confidence improvements exist, return multiple suggestions.",
+    "- Target 3-8 suggestions when safe; return fewer only if confidence is limited.",
+    "- No spec changes, no large refactors, no new dependencies.",
+    "- If uncertain, return no suggestion.",
+    "- You only have read-only virtual IDE tools.",
+    "Review checklist (prioritize high impact first):",
+    "- correctness/logic bugs, edge cases, error handling",
+    "- security vulnerabilities and unsafe input handling",
+    "- reliability/concurrency/resource leaks/timeouts",
+    "- performance hot paths and unnecessary heavy operations",
+    "- API contract/data validation/backward compatibility",
+    "- maintainability/readability only when impactful",
+    "Security checklist:",
+    "- authz/authn bypass, IDOR, privilege escalation",
+    "- injection (SQL/command/template), XSS, CSRF, SSRF",
+    "- path traversal, unsafe file handling, open redirect",
+    "- secrets exposure, weak crypto/randomness, token/session flaws",
+    "- deserialization/prototype pollution/ReDoS/race conditions",
+    "- unsafe eval/shell usage and missing input validation",
+    "Avoid style-only suggestions unless they materially improve quality.",
+    "Return strict JSON:",
+    '{"suggestions":[{"path":"string","line":123,"body":"optional title\\n```suggestion\\n...\\n```"}],"overallComment":"string"}',
+    "If suggestions is not empty, overallComment must be a short, concrete summary.",
+    "If suggestions is empty and you are highly confident no actionable issue exists in changed lines, set overallComment exactly to:",
+    '"REVIEW_OK: No actionable issues found in changed lines."',
+    "If confidence is not high, do not use REVIEW_OK.",
+    "body must contain a GitHub suggestion code block.",
+  ].join("\n");
+}
+
+function buildUserPrompt(input: GenerateSuggestionInput): string {
+  const changedSummary = input.changedFiles
+    .map((file) => {
+      const patchInfo = file.patch
+        ? `patch:\n${file.patch.slice(0, 4000)}`
+        : "patch: (omitted by GitHub API)";
+
+      return [
+        `file: ${file.filename}`,
+        `status: ${file.status}`,
+        `additions: ${file.additions}`,
+        `deletions: ${file.deletions}`,
+        patchInfo,
+      ].join("\n");
+    })
+    .join("\n\n---\n\n");
+
+  return [
+    `Repository: ${input.owner}/${input.repo}`,
+    `PR: #${input.pullNumber}`,
+    `Head SHA: ${input.headSha}`,
+    "Review only changed files with a comprehensive quality perspective.",
+    "When patch is missing, use search_text and read_file sparingly.",
+    "If no high-confidence safe suggestion exists, return empty suggestions.",
+    "Prefer multiple independent suggestions across files when possible.",
+    "Changed files:",
+    changedSummary,
+  ].join("\n\n");
+}
+
+function extractJson(content: string): string {
+  const start = content.indexOf("{");
+  const end = content.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("No JSON object found in LLM output.");
+  }
+  return content.slice(start, end + 1);
+}
+
+function sanitizeSuggestionBody(body: string): string | null {
+  if (!body.includes("```suggestion")) {
+    return null;
+  }
+
+  const blockMatch = /```suggestion\n([\s\S]*?)\n```/m.exec(body);
+  if (!blockMatch) {
+    return null;
+  }
+
+  const blockContent = blockMatch[1];
+  if (blockContent === undefined) {
+    return null;
+  }
+
+  const lines = blockContent.split("\n");
+  if (lines.length === 0 || lines.length > 10) {
+    return null;
+  }
+
+  return body.trim();
+}
+
+function extractSuggestionHeadline(body: string): string {
+  const blockIndex = body.indexOf("```suggestion");
+  const prefix = blockIndex >= 0 ? body.slice(0, blockIndex).trim() : body.trim();
+  const firstLine = prefix.split("\n")[0];
+  return (firstLine ?? "").trim();
+}
+
+function normalizeResult(raw: unknown): SuggestionResult {
+  const payload = raw as {
+    suggestions?: Array<{
+      path?: string;
+      line?: number;
+      body?: string;
+    }>;
+    overallComment?: string;
+  };
+
+  const suggestions: SuggestionCandidate[] = [];
+
+  for (const item of payload.suggestions ?? []) {
+    if (!item.path || typeof item.path !== "string") {
+      continue;
+    }
+
+    if (!Number.isInteger(item.line) || (item.line ?? 0) <= 0) {
+      continue;
+    }
+
+    if (!item.body || typeof item.body !== "string") {
+      continue;
+    }
+
+    const safeBody = sanitizeSuggestionBody(item.body);
+    if (!safeBody) {
+      continue;
+    }
+
+    const line = item.line;
+    if (line === undefined) {
+      continue;
+    }
+
+    suggestions.push({
+      path: item.path.replace(/^\.\//, ""),
+      line,
+      body: safeBody,
+    });
+
+    if (suggestions.length >= 12) {
+      break;
+    }
+  }
+
+  return {
+    suggestions,
+    overallComment: typeof payload.overallComment === "string" ? payload.overallComment.trim() : undefined,
+  };
+}
+
+export class OpenAiReviewProvider implements ReviewLlmProvider {
+  private readonly modelFactory: ReturnType<typeof createOpenAI>;
+
+  constructor(
+    apiKey: string,
+    private readonly model: string,
+  ) {
+    this.modelFactory = createOpenAI({ apiKey });
+  }
+
+  async generateSuggestions(input: GenerateSuggestionInput): Promise<SuggestionResult> {
+    const result = await generateText({
+      model: this.modelFactory(this.model),
+      temperature: 0.1,
+      system: buildSystemPrompt(),
+      prompt: buildUserPrompt(input),
+      tools: {
+        list_dir: tool({
+          description: "List repository paths. This must be the first tool call in each PR review and use depth=3.",
+          inputSchema: z.object({
+            path: z.string().default("."),
+            depth: z.number().int().default(3),
+            max_entries: z.number().int().default(400),
+          }),
+          execute: async ({ path, depth, max_entries }) => {
+            return input.virtualIdeTools.call("list_dir", { path, depth, max_entries });
+          },
+        }),
+        get_changed_files: tool({
+          description: "Get changed file list from GitHub PR API.",
+          inputSchema: z.object({}),
+          execute: async () => {
+            return input.virtualIdeTools.call("get_changed_files", {});
+          },
+        }),
+        read_file: tool({
+          description: "Read line range from file. Restricted to changed files by default.",
+          inputSchema: z.object({
+            path: z.string(),
+            start_line: z.number().int().positive(),
+            end_line: z.number().int().positive(),
+          }),
+          execute: async ({ path, start_line, end_line }) => {
+            return input.virtualIdeTools.call("read_file", { path, start_line, end_line });
+          },
+        }),
+        search_text: tool({
+          description: "Search text in changed files and return compact matches.",
+          inputSchema: z.object({
+            query: z.string(),
+            max_results: z.number().int().positive().max(50).default(20),
+          }),
+          execute: async ({ query, max_results }) => {
+            return input.virtualIdeTools.call("search_text", { query, max_results });
+          },
+        }),
+      },
+      stopWhen: stepCountIs(12),
+      prepareStep: ({ stepNumber }) => {
+        if (stepNumber === 0) {
+          return {
+            toolChoice: { type: "tool", toolName: "list_dir" },
+            activeTools: ["list_dir"],
+          };
+        }
+
+        return {
+          toolChoice: "auto",
+          activeTools: [...ALL_TOOL_NAMES],
+        };
+      },
+      providerOptions: {
+        openai: {
+          parallelToolCalls: false,
+        },
+      },
+    });
+
+    const content = result.text;
+    if (!content || typeof content !== "string") {
+      return { suggestions: [] };
+    }
+
+    try {
+      const parsed = JSON.parse(extractJson(content)) as unknown;
+      const normalized = normalizeResult(parsed);
+
+      if (!normalized.overallComment && normalized.suggestions.length > 0) {
+        const fallbackOverallComment = await this.generateOverallComment({
+          owner: input.owner,
+          repo: input.repo,
+          pullNumber: input.pullNumber,
+          suggestions: normalized.suggestions,
+        });
+
+        return {
+          ...normalized,
+          overallComment: fallbackOverallComment,
+        };
+      }
+
+      return normalized;
+    } catch {
+      return {
+        suggestions: [],
+        overallComment: "LLM output could not be parsed into safe suggestions.",
+      };
+    }
+  }
+
+  async generateReviewingComment(input: GenerateReviewingCommentInput): Promise<string | undefined> {
+    try {
+      const result = await generateText({
+        model: this.modelFactory(this.model),
+        temperature: 0.3,
+        system: [
+          "You write concise markdown status comments for pull request review bots.",
+          "Style should feel like a modern review assistant status update.",
+          "Do not mention competitor products.",
+          "No code fences.",
+          "Output only markdown body content.",
+          "Use one heading, one details block, and short bullet points.",
+          "Keep it under 180 words.",
+        ].join("\n"),
+        prompt: [
+          `Repository: ${input.owner}/${input.repo}`,
+          `PR: #${input.pullNumber}`,
+          `Trigger source: ${input.source}`,
+          "Create an in-progress review status comment in English.",
+          "It should say the review started, what is currently happening, and what final output will follow.",
+        ].join("\n\n"),
+      });
+
+      const text = result.text?.trim();
+      return text && text.length > 0 ? text : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async generateOverallComment(input: {
+    owner: string;
+    repo: string;
+    pullNumber: number;
+    suggestions: SuggestionCandidate[];
+  }): Promise<string | undefined> {
+    const suggestionSummary = input.suggestions
+      .slice(0, 6)
+      .map((item, index) => {
+        const headline = extractSuggestionHeadline(item.body);
+        return [
+          `Suggestion ${index + 1}`,
+          `- path: ${item.path}`,
+          `- line: ${item.line}`,
+          `- headline: ${headline || "(no title)"}`,
+        ].join("\n");
+      })
+      .join("\n\n");
+
+    try {
+      const result = await generateText({
+        model: this.modelFactory(this.model),
+        temperature: 0.2,
+        system: [
+          "You write a concise pull request review summary.",
+          "Output plain text only.",
+          "2-3 short sentences.",
+          "Mention concrete risk/themes from suggestions.",
+          "No markdown, no code fences.",
+        ].join("\n"),
+        prompt: [
+          `Repository: ${input.owner}/${input.repo}`,
+          `PR: #${input.pullNumber}`,
+          "Generate the top-level review body based on these suggestions:",
+          suggestionSummary,
+        ].join("\n\n"),
+      });
+
+      const text = result.text?.trim();
+      return text && text.length > 0 ? text : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+}
