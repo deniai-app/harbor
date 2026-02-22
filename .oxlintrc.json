@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "env": {
+    "browser": true,
+    "node": true
+  },
+  "plugins": ["typescript", "react", "nextjs"],
+  "categories": {
+    "correctness": "error"
+  },
+  "ignorePatterns": ["**/.next/**", "**/.turbo/**", "**/dist/**", "**/coverage/**"]
+}
