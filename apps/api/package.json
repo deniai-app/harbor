@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "build": "tsc --noEmit",
-    "start": "tsx src/index.ts",
+    "start": "bun src/index.ts",
     "lint": "oxlint -c ../../.oxlintrc.json .",
     "lint:fix": "oxlint -c ../../.oxlintrc.json --fix .",
     "typecheck": "tsc --noEmit"
