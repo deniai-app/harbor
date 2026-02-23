@@ -1,6 +1,14 @@
 import type { GitHubPullRequestFile, SuggestionResult } from "@workspace/shared";
 import type { VirtualIdeTools } from "../virtual-ide/context";
 
+export type ReviewOverallStatus = "ok" | "uncertain";
+export const REVIEW_OK_COMMENT = "REVIEW_OK: No actionable issues found in changed lines.";
+
+export type ReviewSuggestionResult = SuggestionResult & {
+  overallStatus?: ReviewOverallStatus;
+  allowAutoApprove?: boolean;
+};
+
 export interface GenerateSuggestionInput {
   owner: string;
   repo: string;
@@ -18,6 +26,6 @@ export interface GenerateReviewingCommentInput {
 }
 
 export interface ReviewLlmProvider {
-  generateSuggestions(input: GenerateSuggestionInput): Promise<SuggestionResult>;
+  generateSuggestions(input: GenerateSuggestionInput): Promise<ReviewSuggestionResult>;
   generateReviewingComment(input: GenerateReviewingCommentInput): Promise<string | undefined>;
 }

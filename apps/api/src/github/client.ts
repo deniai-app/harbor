@@ -84,8 +84,8 @@ interface PullRequestHeadResponse {
   head: {
     sha: string;
     repo: {
-      clone_url: string;
-    };
+      clone_url?: string | null;
+    } | null;
   };
 }
 
@@ -94,7 +94,7 @@ export async function getPullRequestHead(params: {
   owner: string;
   repo: string;
   pullNumber: number;
-}): Promise<{ headSha: string; cloneUrl: string }> {
+}): Promise<{ headSha: string; cloneUrl?: string }> {
   const response = await githubRequest({
     token: params.token,
     path: `/repos/${params.owner}/${params.repo}/pulls/${params.pullNumber}`,
@@ -102,7 +102,7 @@ export async function getPullRequestHead(params: {
   const data = await parseResponse<PullRequestHeadResponse>(response);
   return {
     headSha: data.head.sha,
-    cloneUrl: data.head.repo.clone_url,
+    cloneUrl: data.head.repo?.clone_url ?? undefined,
   };
 }
 

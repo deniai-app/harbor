@@ -13,7 +13,7 @@ import {
   type ReviewCommentInput,
 } from "../github/client";
 import type { GitHubInstallationAuth } from "../github/auth";
-import type { ReviewLlmProvider } from "../llm/types";
+import { REVIEW_OK_COMMENT, type ReviewLlmProvider } from "../llm/types";
 import { VirtualIdeTools } from "../virtual-ide/context";
 
 interface PullRequestWebhookPayload {
@@ -23,6 +23,7 @@ interface PullRequestWebhookPayload {
   };
   repository: {
     name: string;
+    clone_url?: string;
     owner: {
       login: string;
     };
@@ -32,7 +33,7 @@ interface PullRequestWebhookPayload {
     head: {
       sha: string;
       repo: {
-        clone_url: string;
+        clone_url?: string;
       };
     };
   };
@@ -134,13 +135,72 @@ function isPullRequestReviewAction(action: string): action is "submitted" | "edi
   return action === "submitted" || action === "edited";
 }
 
-function containsMention(body: string, mention: string): boolean {
-  const trimmedMention = mention.trim();
+const GITHUB_USER_ID_MENTION_PATTERN = /<@([a-z0-9_-]+)>/gi;
+const GITHUB_USERNAME_MENTION_PATTERN = /(^|[^a-z0-9-])@([a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)(?=[^a-z0-9-]|$)/gi;
+
+interface MentionTarget {
+  kind: "user_id" | "username";
+  value: string;
+}
+
+function parseMentionTarget(rawMention: string): MentionTarget | null {
+  const trimmedMention = rawMention.trim();
   if (trimmedMention.length === 0) {
+    return null;
+  }
+
+  const userIdMatch = /^<@([a-z0-9_-]+)>$/i.exec(trimmedMention);
+  if (userIdMatch?.[1]) {
+    return {
+      kind: "user_id",
+      value: userIdMatch[1].toLowerCase(),
+    };
+  }
+
+  const normalizedUsername = trimmedMention.replace(/^@/, "").toLowerCase();
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/.test(normalizedUsername)) {
+    return null;
+  }
+
+  return {
+    kind: "username",
+    value: normalizedUsername,
+  };
+}
+
+function extractMentionCandidates(body: string): { usernames: Set<string>; userIds: Set<string> } {
+  const usernames = new Set<string>();
+  const userIds = new Set<string>();
+
+  for (const match of body.matchAll(GITHUB_USER_ID_MENTION_PATTERN)) {
+    const id = match[1];
+    if (id) {
+      userIds.add(id.toLowerCase());
+    }
+  }
+
+  for (const match of body.matchAll(GITHUB_USERNAME_MENTION_PATTERN)) {
+    const username = match[2];
+    if (username) {
+      usernames.add(username.toLowerCase());
+    }
+  }
+
+  return { usernames, userIds };
+}
+
+function containsMention(body: string, mention: string): boolean {
+  const target = parseMentionTarget(mention);
+  if (!target) {
     return false;
   }
 
-  return body.toLowerCase().includes(trimmedMention.toLowerCase());
+  const candidates = extractMentionCandidates(body);
+  if (target.kind === "user_id") {
+    return candidates.userIds.has(target.value);
+  }
+
+  return candidates.usernames.has(target.value);
 }
 
 function isDeniAiSystemComment(body: string): boolean {
@@ -334,14 +394,17 @@ function normalizePath(path: string): string {
   return path.replace(/^\.\//, "").replaceAll("\\", "/");
 }
 
-function buildFallbackSection(items: SuggestionCandidate[]): string {
-  const lines = [
-    "Some suggestions could not be attached inline (missing/ambiguous diff position):",
-  ];
+interface FallbackSuggestion {
+  path: string;
+  line: number;
+  reason: string;
+}
+
+function buildFallbackSection(items: FallbackSuggestion[]): string {
+  const lines = [`${items.length} suggestion(s) could not be attached inline:`];
 
   for (const item of items) {
-    lines.push(`\n${item.path}:${item.line}`);
-    lines.push(item.body);
+    lines.push(`- ${item.path}:${item.line} (${item.reason})`);
   }
 
   return lines.join("\n").trim();
@@ -354,7 +417,7 @@ function buildReviewPayload(params: {
 }): { comments: ReviewCommentInput[]; body?: string } | null {
   const fileMap = new Map(params.files.map((file) => [file.filename, file]));
   const comments: ReviewCommentInput[] = [];
-  const fallbackItems: SuggestionCandidate[] = [];
+  const fallbackItems: FallbackSuggestion[] = [];
   const seen = new Set<string>();
 
   for (const suggestion of params.suggestions) {
@@ -362,7 +425,11 @@ function buildReviewPayload(params: {
     const file = fileMap.get(path);
 
     if (!file || !file.patch) {
-      fallbackItems.push({ ...suggestion, path });
+      fallbackItems.push({
+        path,
+        line: suggestion.line,
+        reason: "patch is unavailable",
+      });
       continue;
     }
 
@@ -370,7 +437,11 @@ function buildReviewPayload(params: {
     const position = positionMap.get(suggestion.line);
 
     if (!position) {
-      fallbackItems.push({ ...suggestion, path });
+      fallbackItems.push({
+        path,
+        line: suggestion.line,
+        reason: "line is not an added diff line",
+      });
       continue;
     }
 
@@ -468,8 +539,7 @@ async function runReviewForPullRequest(
   console.info(`[review] Start review for ${params.owner}/${params.repo}#${params.pullNumber}`);
 
   let headSha = params.headSha;
-  let cloneUrl = params.cloneUrl;
-  if (!headSha || !cloneUrl) {
+  if (!headSha) {
     const head = await getPullRequestHead({
       token,
       owner: params.owner,
@@ -477,7 +547,10 @@ async function runReviewForPullRequest(
       pullNumber: params.pullNumber,
     });
     headSha = head.headSha;
-    cloneUrl = head.cloneUrl;
+  }
+
+  if (!headSha) {
+    throw new Error(`[review] Missing head SHA for ${params.owner}/${params.repo}#${params.pullNumber}`);
   }
 
   const files = await getPullRequestFiles({
@@ -495,11 +568,23 @@ async function runReviewForPullRequest(
     files,
   });
 
-  const workdirSession = await createWorkdirSession({
-    cloneUrl,
-    token,
-    headSha,
-  });
+  let workdirSession: Awaited<ReturnType<typeof createWorkdirSession>>;
+  try {
+    workdirSession = await createWorkdirSession({
+      token,
+      repoOwner: params.owner,
+      repoName: params.repo,
+      pullNumber: params.pullNumber,
+      headSha,
+      cloneUrl: params.cloneUrl,
+    });
+  } catch (error) {
+    console.error(
+      `[review] Failed to prepare workdir for ${params.owner}/${params.repo}#${params.pullNumber}. clone_url=${params.cloneUrl ?? "(none)"}`,
+      error,
+    );
+    throw error;
+  }
 
   try {
     const virtualIdeTools = new VirtualIdeTools({
@@ -518,18 +603,21 @@ async function runReviewForPullRequest(
     });
     console.info(`[review] LLM produced ${llmResult.suggestions.length} suggestion candidates for ${params.owner}/${params.repo}#${params.pullNumber}`);
 
-    const explicitReviewOk = llmResult.overallComment?.trim() === "REVIEW_OK: No actionable issues found in changed lines.";
-    const canApprove = llmResult.suggestions.length === 0 && explicitReviewOk;
+    const explicitReviewOk = llmResult.overallComment?.trim() === REVIEW_OK_COMMENT;
+    const explicitApprovalKey = llmResult.allowAutoApprove === true;
+    const canApprove =
+      llmResult.overallStatus === "ok" &&
+      llmResult.suggestions.length === 0 &&
+      (explicitReviewOk || explicitApprovalKey);
 
     if (canApprove) {
-      const approvalBody = llmResult.overallComment?.trim() || "REVIEW_OK: No actionable issues found in changed lines.";
       await createPullRequestReview({
         token,
         owner: params.owner,
         repo: params.repo,
         pullNumber: params.pullNumber,
         event: "APPROVE",
-        body: approvalBody,
+        body: REVIEW_OK_COMMENT,
       });
       console.info(`[review] Approved ${params.owner}/${params.repo}#${params.pullNumber} (no actionable issues).`);
       return {
@@ -539,9 +627,15 @@ async function runReviewForPullRequest(
       };
     }
 
+    const safeOverallComment =
+      llmResult.overallComment?.trim() ||
+      (llmResult.suggestions.length === 0
+        ? "Review completed without auto-approval because confidence was insufficient."
+        : undefined);
+
     const reviewPayload = buildReviewPayload({
       suggestions: llmResult.suggestions,
-      overallComment: llmResult.overallComment,
+      overallComment: safeOverallComment,
       files: mergedFiles,
     });
 
@@ -631,7 +725,7 @@ export async function processPullRequestEvent(
         repo,
         pullNumber,
         headSha: payload.pull_request.head.sha,
-        cloneUrl: payload.pull_request.head.repo.clone_url,
+        cloneUrl: payload.repository.clone_url,
         token,
       },
       deps,

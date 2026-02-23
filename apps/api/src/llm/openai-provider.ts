@@ -1,8 +1,14 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText, stepCountIs, tool } from "ai";
-import type { SuggestionCandidate, SuggestionResult } from "@workspace/shared";
+import type { SuggestionCandidate } from "@workspace/shared";
 import { z } from "zod";
-import type { GenerateReviewingCommentInput, GenerateSuggestionInput, ReviewLlmProvider } from "./types";
+import {
+  REVIEW_OK_COMMENT,
+  type GenerateReviewingCommentInput,
+  type GenerateSuggestionInput,
+  type ReviewLlmProvider,
+  type ReviewSuggestionResult,
+} from "./types";
 
 const ALL_TOOL_NAMES = ["list_dir", "get_changed_files", "read_file", "search_text"] as const;
 
@@ -37,10 +43,13 @@ function buildSystemPrompt(): string {
     "- unsafe eval/shell usage and missing input validation",
     "Avoid style-only suggestions unless they materially improve quality.",
     "Return strict JSON:",
-    '{"suggestions":[{"path":"string","line":123,"body":"optional title\\n```suggestion\\n...\\n```"}],"overallComment":"string"}',
+    '{"suggestions":[{"path":"string","line":123,"body":"optional title\\n```suggestion\\n...\\n```"}],"overallStatus":"ok|uncertain","allowAutoApprove":false,"overallComment":"string"}',
+    "overallStatus is required.",
+    "Set overallStatus='ok' only when you are highly confident there are no actionable issues in changed lines.",
+    "Set allowAutoApprove=true only when overallStatus='ok' and suggestions is empty.",
     "If suggestions is not empty, overallComment must be a short, concrete summary.",
     "If suggestions is empty and you are highly confident no actionable issue exists in changed lines, set overallComment exactly to:",
-    '"REVIEW_OK: No actionable issues found in changed lines."',
+    `"${REVIEW_OK_COMMENT}"`,
     "If confidence is not high, do not use REVIEW_OK.",
     "body must contain a GitHub suggestion code block.",
   ].join("\n");
@@ -115,13 +124,15 @@ function extractSuggestionHeadline(body: string): string {
   return (firstLine ?? "").trim();
 }
 
-function normalizeResult(raw: unknown): SuggestionResult {
+function normalizeResult(raw: unknown): ReviewSuggestionResult {
   const payload = raw as {
     suggestions?: Array<{
       path?: string;
       line?: number;
       body?: string;
     }>;
+    overallStatus?: string;
+    allowAutoApprove?: boolean;
     overallComment?: string;
   };
 
@@ -161,8 +172,12 @@ function normalizeResult(raw: unknown): SuggestionResult {
     }
   }
 
+  const overallStatus = payload.overallStatus === "ok" ? "ok" : payload.overallStatus === "uncertain" ? "uncertain" : undefined;
+
   return {
     suggestions,
+    overallStatus,
+    allowAutoApprove: payload.allowAutoApprove === true,
     overallComment: typeof payload.overallComment === "string" ? payload.overallComment.trim() : undefined,
   };
 }
@@ -177,7 +192,7 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
     this.modelFactory = createOpenAI({ apiKey });
   }
 
-  async generateSuggestions(input: GenerateSuggestionInput): Promise<SuggestionResult> {
+  async generateSuggestions(input: GenerateSuggestionInput): Promise<ReviewSuggestionResult> {
     const result = await generateText({
       model: this.modelFactory(this.model),
       temperature: 0.1,
@@ -247,7 +262,7 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
 
     const content = result.text;
     if (!content || typeof content !== "string") {
-      return { suggestions: [] };
+      return { suggestions: [], overallStatus: "uncertain", allowAutoApprove: false };
     }
 
     try {
@@ -272,6 +287,8 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
     } catch {
       return {
         suggestions: [],
+        overallStatus: "uncertain",
+        allowAutoApprove: false,
         overallComment: "LLM output could not be parsed into safe suggestions.",
       };
     }
