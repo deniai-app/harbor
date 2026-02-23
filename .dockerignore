@@ -3,4 +3,3 @@ node_modules
 Dockerfile
 .dockerignore
 .vscode
-bun.lock
