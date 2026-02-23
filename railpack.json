@@ -1,36 +1,36 @@
 {
   "$schema": "https://schema.railpack.com",
-
   "buildAptPackages": [
     "git",
     "ca-certificates"
   ],
-
   "caches": {
     "bun": {
       "directory": "/root/.bun/install/cache",
       "type": "shared"
     }
   },
-
   "steps": {
     "install": {
       "inputs": [
         {
           "local": true,
-          "include": ["." ]
+          "include": [
+            "."
+          ]
         }
       ],
       "commands": [
         {
-          "cmd": "cd /app && bun install --frozen-lockfile",
+          "cmd": "cd /apps/api && bun install --frozen-lockfile",
           "customName": "Install workspace dependencies"
         }
       ],
-      "caches": ["bun"]
+      "caches": [
+        "bun"
+      ]
     }
   },
-
   "deploy": {
     "startCommand": "bun run --filter api start",
     "aptPackages": [
