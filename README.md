@@ -1,24 +1,24 @@
-# Deni AI Harbor (Prototype)
+# Deni AI Harbor
 
-GitHub PR に対して `suggestion` 形式のレビューコメントを自動投稿するプロトタイプです。
+Deni AI Harbor is a production-oriented GitHub App that posts **safe, suggestion-only PR reviews** automatically.
 
 - Web: `apps/web` (Next.js)
 - API: `apps/api` (Hono, Node)
 - Shared: `packages/shared`
-- Deploy想定: Dokploy/Coolify 等の自前サーバー（Docker定義なし）
+- Deployment target: self-hosted Docker stack (Dokploy / Coolify / your own infrastructure)
 
-## できること (v1)
+## What it does (v1)
 
-1. GitHub App webhook (`pull_request: opened/synchronize`, `issue_comment: created`, `pull_request_review: submitted/edited`, `pull_request_review_comment: created`) を受信
-2. `X-Hub-Signature-256` を検証
-3. installation token を発行して PR changed files を取得
-4. patch の `+` 行に対応する diff `position` を計算
-5. LLM (Vercel AI SDK + OpenAI provider) に read-only 仮想IDEツールを function calling で提供
-6. `POST /pulls/{pull_number}/reviews` で inline suggestion コメントを投稿（`issue_comment` / `pull_request_review` / `pull_request_review_comment` は `@deniai-app` メンション時のみ実行）
-7. 指摘が無く、かつ総合レビュー（正しさ・セキュリティ・性能・保守性）が高信頼で完了した場合のみ `APPROVE` レビューを投稿
-8. patch が欠落するファイルは PR 全体コメントへフォールバック
+1. Accepts GitHub App webhooks (`pull_request: opened/synchronize`, `issue_comment: created`, `pull_request_review: submitted/edited`, `pull_request_review_comment: created`).
+2. Verifies `X-Hub-Signature-256` before handling payload.
+3. Generates installation tokens and fetches changed files for the PR.
+4. Computes diff positions for added lines and builds robust patch mapping.
+5. Provides read-only virtual IDE tools via function calling to the LLM.
+6. Posts inline review comments with ````suggestion````, and optionally auto-approves only when confidence is high.
+7. Executes only on authorized mention paths for certain webhook event types to avoid noisy automation.
+8. Falls back to PR summary comments when inline attachment is not safe.
 
-## リポジトリ構成
+## Repository layout
 
 ```text
 /apps/web
@@ -26,18 +26,26 @@ GitHub PR に対して `suggestion` 形式のレビューコメントを自動�
 /packages/shared
 ```
 
-## ローカル起動
+## Production profile / behavior
 
-前提: Node.js 20+
+- Safe mode first: suggestions are emitted only when they stay within changed lines and are small, low-risk edits.
+- Auto-approve is conservative: requires explicit model confidence (`overallStatus: ok`) and `overallComment` match.
+- No file writes are performed by the LLM: only read-only repository analysis tools are available.
+- Fork PR handling uses base repository clone + PR ref fetch to avoid permission pitfalls.
+- Shallow clone flow: `/tmp/harbor/{job_id}` with cleanup after each run.
+
+## Local development
+
+Prerequisites: Node.js 20+
 
 ```bash
-# 1) install
+# 1) install dependencies
 bun install
 
 # 2) env
 cp .env.example .env
 
-# 3) start both web + api
+# 3) start both apps
 bun run dev
 ```
 
@@ -45,43 +53,52 @@ bun run dev
 - API: `http://localhost:8787`
 - Health: `GET http://localhost:8787/healthz`
 
-`bun run dev` は turbo で `apps/web` と `apps/api` を同時起動します。
+`bun run dev` starts both `apps/web` and `apps/api` through turbo.
 
-## 必要な環境変数
+## Required environment variables
 
-`.env.example` を参照:
+Refer to `.env.example`:
 
 - `GITHUB_APP_ID`
-- `GITHUB_PRIVATE_KEY_PEM` または `GITHUB_PRIVATE_KEY_PATH`
+- `GITHUB_PRIVATE_KEY_PEM` or `GITHUB_PRIVATE_KEY_PATH`
 - `GITHUB_WEBHOOK_SECRET`
 - `GITHUB_REVIEW_TRIGGER_MENTION` (default: `@deniai-app`)
 - `BASE_URL`
 - `LLM_PROVIDER` (v1: `openai`)
-- `LLM_MODEL` (例: `gpt-5.2-codex`)
+- `LLM_MODEL` (for example: `gpt-5.2-codex`)
 - `OPENAI_API_KEY`
 - `VIRTUAL_IDE_ALLOW_CONFIG_READ` (default `false`)
 
-## GitHub App 設定
+## GitHub App setup
 
-1. GitHubで App を作成
-2. Permissions:
+1. Create a GitHub App
+2. Required permissions:
    - Pull requests: `Read & Write`
    - Contents: `Read`
-   - Metadata: `Read` (通常デフォルト)
+   - Metadata: `Read`
 3. Webhook URL:
    - `${BASE_URL}/webhooks/github`
-4. Webhook secret:
-   - `.env` の `GITHUB_WEBHOOK_SECRET` と同値
-5. Subscribe to events:
-   - `Pull request`
-   - `Issue comment`
-   - `Pull request review`
-   - `Pull request review comment`
-6. App を対象リポジトリへインストール
+4. Set webhook secret equal to `.env` `GITHUB_WEBHOOK_SECRET`
+5. Subscribe to:
+   - Pull request
+   - Issue comment
+   - Pull request review
+   - Pull request review comment
+6. Install the app to target repositories.
 
-## Webhook テスト (curl)
+## Production deployment checklist
 
-### 1) ペイロード作成
+- Run behind HTTPS (reverse proxy or platform TLS termination).
+- Store secrets in secure secret manager/CI variables; never commit private keys.
+- Configure rate-limit and concurrency guards for webhook bursts.
+- Use read-only service accounts for infrastructure dependencies where possible.
+- Add request logging + structured output for each review run (`owner/repo#PR`, result, fallback count).
+- Set up health checks and process restart policies in your orchestrator.
+- Keep separate `canary` and `master` branches for staged promotion.
+
+## Webhook test with curl
+
+### 1) Generate payload
 
 ```bash
 cat > /tmp/pr-opened.json <<'JSON'
@@ -105,7 +122,7 @@ cat > /tmp/pr-opened.json <<'JSON'
 JSON
 ```
 
-### 2) 署名を生成
+### 2) Create signature
 
 ```bash
 secret='replace-with-strong-secret'
@@ -113,44 +130,45 @@ signature="sha256=$(openssl dgst -sha256 -hmac "$secret" /tmp/pr-opened.json | s
 echo "$signature"
 ```
 
-### 3) webhookへ送信
+### 3) Send webhook
 
 ```bash
 curl -i \
-  -X POST "http://localhost:8787/webhooks/github" \
+curl -X POST "http://localhost:8787/webhooks/github" \
   -H "Content-Type: application/json" \
   -H "X-GitHub-Event: pull_request" \
   -H "X-Hub-Signature-256: ${signature}" \
   --data-binary @/tmp/pr-opened.json
 ```
 
-## 仮想IDEツール仕様 (実装済み)
+## Virtual IDE tools (implemented)
 
 - `list_dir(path='.', depth=3, max_entries=400)`
-  - 初回ツール呼び出しは必須
-  - 予算: PRあたり最大3回
+  - Required as the first tool call in prompt flow
+  - Budget: max 3 calls per PR
 - `get_changed_files()`
 - `read_file(path, start_line, end_line)`
-  - 変更ファイルのみ読める（設定ファイル例外は `VIRTUAL_IDE_ALLOW_CONFIG_READ=true` で有効化）
-  - 1回200行、PR合計2000行
-  - 予算: PRあたり最大8回
+  - Only changed files, unless config-files override is enabled (`VIRTUAL_IDE_ALLOW_CONFIG_READ=true`)
+  - 200 lines per call, total 2000 lines per PR
+  - Budget: max 8 calls per PR
 - `search_text(query, max_results=20)`
-  - 予算: PRあたり最大5回
+  - Budget: max 5 calls per PR
 
-除外・秘匿:
+Exclusions and masking:
 
-- 除外ディレクトリ: `.git`, `node_modules`, `dist`, `build`, `.next`, `coverage`, `.cache`, `.turbo`
-- 非表示ファイル: `.env*`, `*.pem`, `id_rsa`, `credentials*`
+- Excluded directories: `.git`, `node_modules`, `dist`, `build`, `.next`, `coverage`, `.cache`, `.turbo`
+- Hidden files: `.env*`, `*.pem`, `id_rsa`, `credentials*`
 
-## shallow clone 方針
+## Diff handling model
 
-- 作業ディレクトリ: `/tmp/harbor/{job_id}`
-- clone: `git clone --depth 1 --no-tags ...`
-- 必要時のみ `head_sha` を fetch/checkout
-- 処理後に毎回削除
+- Workdir: shallow clone `git clone --depth 1 --no-tags ...` into `/tmp/harbor/{job_id}`
+- Fetch PR head by ref (`refs/pull/{number}/head`) when possible
+- Cleanup after each run to keep disks safe and deterministic
 
-## 制約/TODO (v1)
+## Constraints / notes
 
-- LLM 実装は Vercel AI SDK (`ai` + `@ai-sdk/openai`) のみ（インターフェースは分離済み）
-- patch 位置が確定できない提案は PR 全体コメントに退避
-- テストコードは未追加（次段で diff parser / tool budget の単体テスト推奨）
+- Current LLM integration uses Vercel AI SDK (`ai` + `@ai-sdk/openai`) with interface separation.
+- Suggestions that cannot be safely attached inline are summarized and posted as PR comments.
+- Production hardening tasks:
+  - Add more guardrails around context overflow
+  - Expand language/edge-case tests for diff parser and tool budgets

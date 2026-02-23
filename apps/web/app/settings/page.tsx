@@ -16,12 +16,12 @@ export default function SettingsPage() {
       <div className="mb-8 flex items-center justify-between">
         <h1 className="text-3xl font-semibold tracking-tight text-zinc-900">Settings</h1>
         <Link className="text-sm text-zinc-600 underline" href="/">
-          LPへ戻る
+          Back to homepage
         </Link>
       </div>
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-6">
-        <h2 className="text-lg font-medium text-zinc-900">必要な環境変数</h2>
+        <h2 className="text-lg font-medium text-zinc-900">Required environment variables</h2>
         <ul className="mt-4 space-y-2">
           {envKeys.map((key) => (
             <li className="rounded-md bg-zinc-50 px-3 py-2 font-mono text-sm text-zinc-700" key={key}>
