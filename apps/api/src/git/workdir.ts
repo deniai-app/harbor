@@ -22,13 +22,6 @@ async function runGitCommand(args: string[], cwd?: string): Promise<string> {
   } catch (error: unknown) {
     const redact = (value: string) => value.replace(/https:\/\/[^@\s]+@/g, "https://***@");
     const message =
-      error instanceof Error ? redact(error.message) : "Unknown git execution error while running git command";
-    const command = ["git", ...args.map(redact)].join(" ");
-    const details = `Failed command: ${command}${cwd ? ` (cwd: ${cwd})` : ""}`;
-    throw new Error(`${details}\n${message}`);
-  }
-    const redact = (value: string) => value.replace(/https:\/\/[^@\s]+@/g, "https://***@");
-    const message =
       error instanceof Error
         ? redact(error.message)
         : "Unknown git execution error while running git command";
