@@ -10,7 +10,7 @@ import {
   type ReviewSuggestionResult,
 } from "./types";
 
-const ALL_TOOL_NAMES = ["list_dir", "get_changed_files", "read_file", "search_text"] as const;
+const ALL_TOOL_NAMES = ["list_dir", "get_changed_files", "read_file", "search_text", "preview_suggestion"] as const;
 
 function buildSystemPrompt(): string {
   return [
@@ -21,6 +21,7 @@ function buildSystemPrompt(): string {
     "- First tool call must be list_dir(path='.', depth=3).",
     "- Only target added ('+') lines in diffs.",
     "- Do not propose out-of-diff edits.",
+    "- Before finalizing suggestions, use preview_suggestion for each suggestion candidate to validate it can be applied safely to the file context.",
     "- 1 suggestion code block must be <= 10 lines.",
     "- If multiple high-confidence improvements exist, return multiple suggestions.",
     "- Target 3-8 suggestions when safe; return fewer only if confidence is limited.",
@@ -151,6 +152,104 @@ function extractSuggestionHeadline(body: string): string {
   return (firstLine ?? "").trim();
 }
 
+function extractSuggestionBody(content: string): string {
+  const blockMatch = /```suggestion\n([\s\S]*?)\n```/m.exec(content);
+  if (!blockMatch || blockMatch[1] === undefined) {
+    return content;
+  }
+
+  return blockMatch[1];
+}
+
+function previewSuggestion(params: {
+  path: string;
+  line: number;
+  suggestionBody: string;
+  virtualIdeTools: {
+    call: (toolName: string, args: unknown) => Promise<unknown>;
+  };
+}): Promise<{ isSafe: boolean; reason: string; previewPatch?: string; before?: string; after?: string }> {
+  const normalizedPath = params.path.replace(/^\/+/, "");
+  const body = extractSuggestionBody(params.suggestionBody).replace(/\n+$/, "");
+  const replacementLines = body.split("\n");
+
+  if (!normalizedPath || replacementLines.length === 0) {
+    return Promise.resolve({
+      isSafe: false,
+      reason: "invalid suggestion path or empty body",
+    });
+  }
+
+  if (replacementLines.length > 10) {
+    return Promise.resolve({
+      isSafe: false,
+      reason: "suggestion block exceeds 10 lines",
+    });
+  }
+
+  const startLine = Math.max(1, params.line - 6);
+  const endLine = startLine + 45;
+
+  return params.virtualIdeTools
+    .call("read_file", {
+      path: normalizedPath,
+      start_line: startLine,
+      end_line: endLine,
+    })
+    .then((raw) => {
+      const source = typeof raw === "string" ? raw : "";
+      const fileLines = source
+        .split("\n")
+        .map((line) => {
+          const marker = line.match(/^\\d+\| /);
+          return marker ? line.slice(marker[0].length) : line;
+        })
+        .map((line) => line.replace(/\r$/, ""));
+
+      const targetIndex = params.line - startLine;
+      if (targetIndex < 0 || targetIndex >= fileLines.length) {
+        return {
+          isSafe: false,
+          reason: `target line ${params.line} is outside preview window`,
+        };
+      }
+
+      const currentLine = fileLines[targetIndex];
+      if (currentLine === undefined) {
+        return {
+          isSafe: false,
+          reason: `target line ${params.line} is unavailable for safe inline application`,
+        };
+      }
+
+      const before = fileLines.join("\n");
+      const applied = [...fileLines];
+      applied.splice(targetIndex, 1, ...replacementLines);
+      const after = applied.join("\n");
+
+      const patch = [
+        `@@ -${params.line},1 +${params.line},${replacementLines.length} @@`,
+        `- ${currentLine}`,
+        ...replacementLines.map((line) => `+ ${line}`),
+      ].join("\n");
+
+      return {
+        isSafe: true,
+        reason: "preview_ok",
+        before,
+        after,
+        previewPatch: patch,
+      };
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        isSafe: false,
+        reason: message,
+      };
+    });
+}
+
 function normalizeResult(raw: unknown): ReviewSuggestionResult {
   const payload = raw as {
     suggestions?: Array<{
@@ -272,8 +371,24 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
             return input.virtualIdeTools.call("search_text", { query, max_results });
           },
         }),
+        preview_suggestion: tool({
+          description: "Preview how a suggestion would look when applied to a file line for safety checks.",
+          inputSchema: z.object({
+            path: z.string(),
+            line: z.number().int().positive(),
+            suggestionBody: z.string(),
+          }),
+          execute: async ({ path, line, suggestionBody }) => {
+            return previewSuggestion({
+              path,
+              line,
+              suggestionBody,
+              virtualIdeTools: input.virtualIdeTools,
+            });
+          },
+        }),
       },
-      stopWhen: stepCountIs(12),
+      stopWhen: stepCountIs(20),
       prepareStep: ({ stepNumber }) => {
         if (stepNumber === 0) {
           return {
