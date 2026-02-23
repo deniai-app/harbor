@@ -11,7 +11,7 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/ui/package.json ./packages/ui/
 COPY packages/typescript-config/package.json ./packages/typescript-config/
 
-RUN bun install --frozen-lockfile
+RUN bun install --frozen-lockfile --cwd apps/api
 
 FROM oven/bun:1.3.9-alpine AS runtime
 WORKDIR /app
