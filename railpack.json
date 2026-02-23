@@ -13,10 +13,7 @@
   "steps": {
     "install": {
       "commands": [
-        {
-          "cmd": "if [ -f /app/package.json ]; then cd /app; elif [ -f package.json ]; then cd .; elif [ -f /workspace/package.json ]; then cd /workspace; else cd .; fi && bun install --frozen-lockfile",
-          "customName": "Install workspace dependencies"
-        }
+        "sh -c 'cd /app && bun install --frozen-lockfile'"
       ],
       "caches": [
         "bun"
