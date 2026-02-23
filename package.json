@@ -1,6 +1,6 @@
 {
   "name": "deni-ai-harbor",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "workspaces": [
     "apps/*",
@@ -16,11 +16,11 @@
     "format:check": "oxfmt --check ."
   },
   "devDependencies": {
+    "@typescript/native-preview": "^7.0.0-dev.20260223.1",
     "@workspace/typescript-config": "workspace:*",
     "oxfmt": "^0.34.0",
     "oxlint": "^1.49.0",
-    "turbo": "^2.8.1",
-    "typescript": "5.9.3"
+    "turbo": "^2.8.1"
   },
   "engines": {
     "node": ">=20"

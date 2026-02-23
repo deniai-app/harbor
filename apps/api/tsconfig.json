@@ -5,8 +5,8 @@
     "moduleResolution": "Bundler",
     "noEmit": true,
     "types": ["node"],
-    "baseUrl": ".",
     "paths": {
+      "*": ["./*"], // option baseurl removed
       "@workspace/shared": ["../../packages/shared/src/index.ts"]
     }
   },

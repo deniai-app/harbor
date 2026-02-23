@@ -6,19 +6,61 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const ROOT_TMP = "/tmp/harbor";
+const MAX_GIT_RETRIES = 2;
 
-async function runGit(args: string[], cwd?: string): Promise<string> {
-  const { stdout, stderr } = await execFileAsync("git", args, {
-    cwd,
-    env: process.env,
-    maxBuffer: 1024 * 1024 * 10,
-  });
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  if (stderr && stderr.toLowerCase().includes("fatal")) {
-    throw new Error(stderr);
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
   }
 
-  return stdout.trim();
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown git execution error while running git command";
+}
+
+function describeCommand(args: string[], cwd?: string): string {
+  const command = ["git", ...args].join(" ");
+  return `Failed command: ${command}${cwd ? ` (cwd: ${cwd})` : ""}`;
+}
+
+async function runGitCommand(args: string[], cwd?: string): Promise<string> {
+  const commandLine = describeCommand(args, cwd);
+  const redact = (value: string) => value.replace(/https:\/\/(?:[^@\s]+)@/g, "https://***@");
+
+  try {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd,
+      env: process.env,
+      maxBuffer: 1024 * 1024 * 10,
+    });
+
+    return stdout.trim();
+  } catch (error: unknown) {
+    const message = toErrorMessage(error);
+    throw new Error(`${redact(commandLine)}\n${redact(message)}`);
+  }
+}
+
+
+async function runGitWithRetry(args: string[], cwd?: string, attempt = 1): Promise<string> {
+  try {
+    return await runGitCommand(args, cwd);
+  } catch (error) {
+    if (attempt > MAX_GIT_RETRIES) {
+      throw error;
+    }
+
+    console.warn(
+      `[workdir] Git command failed (attempt ${attempt}/${MAX_GIT_RETRIES + 1}). Retrying...`,
+      error,
+    );
+    await sleep(200 * attempt * attempt);
+    return runGitWithRetry(args, cwd, attempt + 1);
+  }
 }
 
 function withTokenInCloneUrl(cloneUrl: string, token: string): string {
@@ -50,16 +92,15 @@ function resolveCloneUrl(params: {
   }
 
   try {
-    // Keep explicit repository.clone_url when available; fallback is only for missing/invalid payload values.
     const parsed = new URL(raw);
     if (parsed.protocol !== "https:") {
       throw new Error(`Unsupported clone URL protocol: ${parsed.protocol}`);
     }
     return parsed.toString();
-  } catch (error) {
+  } catch (error: unknown) {
     console.warn(
       `[workdir] Invalid clone_url for ${params.repoOwner}/${params.repoName}. Falling back to canonical GitHub URL.`,
-      error,
+      toErrorMessage(error),
     );
     return buildDefaultCloneUrl(params.repoOwner, params.repoName);
   }
@@ -98,29 +139,41 @@ export async function createWorkdirSession(params: {
   });
   const authCloneUrl = withTokenInCloneUrl(cloneUrl, params.token);
 
-  await runGit(["clone", "--depth", "1", "--no-tags", authCloneUrl, workdir]);
+  try {
+    await runGitWithRetry(["clone", "--depth", "1", "--no-tags", authCloneUrl, workdir]);
 
-  const pullHeadRef = `refs/pull/${params.pullNumber}/head`;
-  await runGit(["-C", workdir, "fetch", "--depth", "1", "origin", `+${pullHeadRef}:${pullHeadRef}`]);
-  await runGit(["-C", workdir, "checkout", "--detach", pullHeadRef]);
+    const pullHeadRef = `refs/pull/${params.pullNumber}/head`;
+    await runGitWithRetry([
+      "-C",
+      workdir,
+      "fetch",
+      "--depth",
+      "1",
+      "origin",
+      `+${pullHeadRef}:${pullHeadRef}`,
+    ]);
+    await runGitWithRetry(["-C", workdir, "checkout", "--detach", pullHeadRef]);
 
-  if (params.headSha) {
-    const currentHead = await runGit(["-C", workdir, "rev-parse", "HEAD"]);
-    if (currentHead !== params.headSha) {
-      // Defensive fallback: keep old SHA-based fetch path when pull ref and expected SHA diverge.
-      console.warn(
-        `[workdir] pull ref head mismatch for ${params.repoOwner}/${params.repoName}#${params.pullNumber}. expected=${params.headSha} actual=${currentHead}. Retrying with SHA fetch.`,
-      );
-      await runGit(["-C", workdir, "fetch", "--depth", "1", "origin", params.headSha]);
-      await runGit(["-C", workdir, "checkout", "--detach", "FETCH_HEAD"]);
-
-      const fallbackHead = await runGit(["-C", workdir, "rev-parse", "HEAD"]);
-      if (fallbackHead !== params.headSha) {
-        throw new Error(
-          `[workdir] Failed to checkout expected head SHA for ${params.repoOwner}/${params.repoName}#${params.pullNumber}: expected=${params.headSha} actual=${fallbackHead}`,
+    if (params.headSha) {
+      const currentHead = await runGitWithRetry(["-C", workdir, "rev-parse", "HEAD"]);
+      if (currentHead !== params.headSha) {
+        console.warn(
+          `[workdir] pull ref head mismatch for ${params.repoOwner}/${params.repoName}#${params.pullNumber}. expected=${params.headSha} actual=${currentHead}. Retrying with SHA fetch.`,
         );
+        await runGitWithRetry(["-C", workdir, "fetch", "--depth", "1", "origin", params.headSha]);
+        await runGitWithRetry(["-C", workdir, "checkout", "--detach", "FETCH_HEAD"]);
+
+        const fallbackHead = await runGitWithRetry(["-C", workdir, "rev-parse", "HEAD"]);
+        if (fallbackHead !== params.headSha) {
+          throw new Error(
+            `[workdir] Failed to checkout expected head SHA for ${params.repoOwner}/${params.repoName}#${params.pullNumber}: expected=${params.headSha} actual=${fallbackHead}`,
+          );
+        }
       }
     }
+  } catch (error) {
+    await rm(workdir, { recursive: true, force: true });
+    throw error;
   }
 
   return {

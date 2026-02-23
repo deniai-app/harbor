@@ -2,7 +2,7 @@ import type { GitHubPullRequestFile, SuggestionResult } from "@workspace/shared"
 import type { VirtualIdeTools } from "../virtual-ide/context";
 
 export type ReviewOverallStatus = "ok" | "uncertain";
-export const REVIEW_OK_COMMENT = "REVIEW_OK: No actionable issues found in changed lines.";
+export const REVIEW_OK_COMMENT = "No actionable issues found in changed file(s).";
 
 export type ReviewSuggestionResult = SuggestionResult & {
   overallStatus?: ReviewOverallStatus;

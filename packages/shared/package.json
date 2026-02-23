@@ -1,19 +1,20 @@
 {
   "name": "@workspace/shared",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   },
   "scripts": {
-    "lint": "oxlint -c ../../.oxlintrc.json .",
-    "lint:fix": "oxlint -c ../../.oxlintrc.json --fix .",
-    "typecheck": "tsc --noEmit"
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt .",
+    "typecheck": "tsgo --noEmit"
   },
   "devDependencies": {
+    "@typescript/native-preview": "^7.0.0-dev.20260223.1",
     "@workspace/typescript-config": "workspace:*",
-    "oxlint": "^1.49.0",
-    "typescript": "^5.9.3"
+    "oxlint": "^1.49.0"
   }
 }

@@ -10,7 +10,7 @@ import {
   type ReviewSuggestionResult,
 } from "./types";
 
-const ALL_TOOL_NAMES = ["list_dir", "get_changed_files", "read_file", "search_text"] as const;
+const ALL_TOOL_NAMES = ["list_dir", "get_changed_files", "read_file", "search_text", "preview_suggestion"] as const;
 
 function buildSystemPrompt(): string {
   return [
@@ -21,6 +21,7 @@ function buildSystemPrompt(): string {
     "- First tool call must be list_dir(path='.', depth=3).",
     "- Only target added ('+') lines in diffs.",
     "- Do not propose out-of-diff edits.",
+    "- Before finalizing suggestions, use preview_suggestion for each suggestion candidate to validate it can be applied safely to the file context.",
     "- 1 suggestion code block must be <= 10 lines.",
     "- If multiple high-confidence improvements exist, return multiple suggestions.",
     "- Target 3-8 suggestions when safe; return fewer only if confidence is limited.",
@@ -94,6 +95,28 @@ function extractJson(content: string): string {
   return content.slice(start, end + 1);
 }
 
+function dedupeConsecutiveDuplicateBlock(content: string): string {
+  const lines = content.trim().split("\n").map((line) => line.trimEnd());
+  if (lines.length < 2) {
+    return content.trim();
+  }
+
+  for (let size = 1; size <= Math.floor(lines.length / 2); size += 1) {
+    const first = lines.slice(0, size).join("\n");
+    const second = lines.slice(size, size * 2).join("\n");
+    if (size > 0 && first === second) {
+      return first.trim();
+    }
+
+    const third = lines.slice(size * 2, size * 3).join("\n");
+    if (third && first === third) {
+      return first.trim();
+    }
+  }
+
+  return content.trim();
+}
+
 function sanitizeSuggestionBody(body: string): string | null {
   if (!body.includes("```suggestion")) {
     return null;
@@ -109,12 +132,17 @@ function sanitizeSuggestionBody(body: string): string | null {
     return null;
   }
 
-  const lines = blockContent.split("\n");
+  const cleanBlockContent = dedupeConsecutiveDuplicateBlock(blockContent);
+  const lines = cleanBlockContent.split("\n");
   if (lines.length === 0 || lines.length > 10) {
     return null;
   }
 
-  return body.trim();
+  const before = body.slice(0, blockMatch.index ?? 0);
+  const after = body.slice((blockMatch.index ?? 0) + blockMatch[0].length);
+  const cleanBody = `${before}\n\`\`\`suggestion\n${cleanBlockContent}\n\`\`\`${after}`.trim();
+
+  return cleanBody;
 }
 
 function extractSuggestionHeadline(body: string): string {
@@ -122,6 +150,104 @@ function extractSuggestionHeadline(body: string): string {
   const prefix = blockIndex >= 0 ? body.slice(0, blockIndex).trim() : body.trim();
   const firstLine = prefix.split("\n")[0];
   return (firstLine ?? "").trim();
+}
+
+function extractSuggestionBody(content: string): string {
+  const blockMatch = /```suggestion\n([\s\S]*?)\n```/m.exec(content);
+  if (!blockMatch || blockMatch[1] === undefined) {
+    return content;
+  }
+
+  return blockMatch[1];
+}
+
+function previewSuggestion(params: {
+  path: string;
+  line: number;
+  suggestionBody: string;
+  virtualIdeTools: {
+    call: (toolName: string, args: unknown) => Promise<unknown>;
+  };
+}): Promise<{ isSafe: boolean; reason: string; previewPatch?: string; before?: string; after?: string }> {
+  const normalizedPath = params.path.replace(/^\/+/, "");
+  const body = extractSuggestionBody(params.suggestionBody).replace(/\n+$/, "");
+  const replacementLines = body.split("\n");
+
+  if (!normalizedPath || replacementLines.length === 0) {
+    return Promise.resolve({
+      isSafe: false,
+      reason: "invalid suggestion path or empty body",
+    });
+  }
+
+  if (replacementLines.length > 10) {
+    return Promise.resolve({
+      isSafe: false,
+      reason: "suggestion block exceeds 10 lines",
+    });
+  }
+
+  const startLine = Math.max(1, params.line - 6);
+  const endLine = startLine + 45;
+
+  return params.virtualIdeTools
+    .call("read_file", {
+      path: normalizedPath,
+      start_line: startLine,
+      end_line: endLine,
+    })
+    .then((raw) => {
+      const source = typeof raw === "string" ? raw : "";
+      const fileLines = source
+        .split("\n")
+        .map((line) => {
+          const marker = line.match(/^\\d+\| /);
+          return marker ? line.slice(marker[0].length) : line;
+        })
+        .map((line) => line.replace(/\r$/, ""));
+
+      const targetIndex = params.line - startLine;
+      if (targetIndex < 0 || targetIndex >= fileLines.length) {
+        return {
+          isSafe: false,
+          reason: `target line ${params.line} is outside preview window`,
+        };
+      }
+
+      const currentLine = fileLines[targetIndex];
+      if (currentLine === undefined) {
+        return {
+          isSafe: false,
+          reason: `target line ${params.line} is unavailable for safe inline application`,
+        };
+      }
+
+      const before = fileLines.join("\n");
+      const applied = [...fileLines];
+      applied.splice(targetIndex, 1, ...replacementLines);
+      const after = applied.join("\n");
+
+      const patch = [
+        `@@ -${params.line},1 +${params.line},${replacementLines.length} @@`,
+        `- ${currentLine}`,
+        ...replacementLines.map((line) => `+ ${line}`),
+      ].join("\n");
+
+      return {
+        isSafe: true,
+        reason: "preview_ok",
+        before,
+        after,
+        previewPatch: patch,
+      };
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        isSafe: false,
+        reason: message,
+      };
+    });
 }
 
 function normalizeResult(raw: unknown): ReviewSuggestionResult {
@@ -172,13 +298,19 @@ function normalizeResult(raw: unknown): ReviewSuggestionResult {
     }
   }
 
-  const overallStatus = payload.overallStatus === "ok" ? "ok" : payload.overallStatus === "uncertain" ? "uncertain" : undefined;
+  const overallStatus =
+    payload.overallStatus === "ok"
+      ? "ok"
+      : payload.overallStatus === "uncertain"
+        ? "uncertain"
+        : undefined;
 
   return {
     suggestions,
     overallStatus,
     allowAutoApprove: payload.allowAutoApprove === true,
-    overallComment: typeof payload.overallComment === "string" ? payload.overallComment.trim() : undefined,
+    overallComment:
+      typeof payload.overallComment === "string" ? payload.overallComment.trim() : undefined,
   };
 }
 
@@ -200,7 +332,8 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
       prompt: buildUserPrompt(input),
       tools: {
         list_dir: tool({
-          description: "List repository paths. This must be the first tool call in each PR review and use depth=3.",
+          description:
+            "List repository paths. This must be the first tool call in each PR review and use depth=3.",
           inputSchema: z.object({
             path: z.string().default("."),
             depth: z.number().int().default(3),
@@ -238,8 +371,24 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
             return input.virtualIdeTools.call("search_text", { query, max_results });
           },
         }),
+        preview_suggestion: tool({
+          description: "Preview how a suggestion would look when applied to a file line for safety checks.",
+          inputSchema: z.object({
+            path: z.string(),
+            line: z.number().int().positive(),
+            suggestionBody: z.string(),
+          }),
+          execute: async ({ path, line, suggestionBody }) => {
+            return previewSuggestion({
+              path,
+              line,
+              suggestionBody,
+              virtualIdeTools: input.virtualIdeTools,
+            });
+          },
+        }),
       },
-      stopWhen: stepCountIs(12),
+      stopWhen: stepCountIs(20),
       prepareStep: ({ stepNumber }) => {
         if (stepNumber === 0) {
           return {
@@ -269,21 +418,51 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
       const parsed = JSON.parse(extractJson(content)) as unknown;
       const normalized = normalizeResult(parsed);
 
-      if (!normalized.overallComment && normalized.suggestions.length > 0) {
+      const seen = new Set<string>();
+      const validatedSuggestions: SuggestionCandidate[] = [];
+      for (const suggestion of normalized.suggestions) {
+        const key = `${suggestion.path}:${suggestion.line}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+
+        const preview = await previewSuggestion({
+          path: suggestion.path,
+          line: suggestion.line,
+          suggestionBody: suggestion.body,
+          virtualIdeTools: input.virtualIdeTools,
+        });
+        if (preview.isSafe) {
+          validatedSuggestions.push(suggestion);
+          continue;
+        }
+
+        console.warn(
+          `[review] Preview check failed for ${suggestion.path}:${suggestion.line} -> ${preview.reason}`,
+        );
+      }
+
+      const filtered = {
+        ...normalized,
+        suggestions: validatedSuggestions,
+      };
+
+      if (!filtered.overallComment && filtered.suggestions.length > 0) {
         const fallbackOverallComment = await this.generateOverallComment({
           owner: input.owner,
           repo: input.repo,
           pullNumber: input.pullNumber,
-          suggestions: normalized.suggestions,
+          suggestions: filtered.suggestions,
         });
 
         return {
-          ...normalized,
+          ...filtered,
           overallComment: fallbackOverallComment,
         };
       }
 
-      return normalized;
+      return filtered;
     } catch {
       return {
         suggestions: [],
@@ -294,7 +473,9 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
     }
   }
 
-  async generateReviewingComment(input: GenerateReviewingCommentInput): Promise<string | undefined> {
+  async generateReviewingComment(
+    input: GenerateReviewingCommentInput,
+  ): Promise<string | undefined> {
     try {
       const result = await generateText({
         model: this.modelFactory(this.model),

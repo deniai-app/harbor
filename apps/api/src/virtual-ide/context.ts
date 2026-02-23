@@ -133,9 +133,12 @@ export class VirtualIdeTools {
 
   private resolveRepoPath(repoRelativePath: string): string {
     const normalized = normalizeRepoRelativePath(repoRelativePath);
-    const candidate = normalized === "." ? this.options.rootDir : resolve(this.options.rootDir, normalized);
+    const candidate =
+      normalized === "." ? this.options.rootDir : resolve(this.options.rootDir, normalized);
 
-    const safeRoot = this.options.rootDir.endsWith(sep) ? this.options.rootDir : `${this.options.rootDir}${sep}`;
+    const safeRoot = this.options.rootDir.endsWith(sep)
+      ? this.options.rootDir
+      : `${this.options.rootDir}${sep}`;
     if (candidate !== this.options.rootDir && !candidate.startsWith(safeRoot)) {
       throw new Error("Path escaped repository root.");
     }
@@ -166,7 +169,11 @@ export class VirtualIdeTools {
 
     const output: string[] = [];
 
-    const walk = async (absoluteDir: string, currentRelative: string, depthLeft: number): Promise<void> => {
+    const walk = async (
+      absoluteDir: string,
+      currentRelative: string,
+      depthLeft: number,
+    ): Promise<void> => {
       if (output.length >= resolvedMax || depthLeft < 0) {
         return;
       }
