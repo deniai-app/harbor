@@ -21,7 +21,7 @@
     }
   },
   "deploy": {
-    "startCommand": "bun run --filter api start",
+    "startCommand": "sh -c 'cd /app/apps/api && bun run start'" ,
     "aptPackages": [
       "git",
       "ca-certificates"

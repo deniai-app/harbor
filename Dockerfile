@@ -27,4 +27,4 @@ COPY --from=deps /app/node_modules /app/node_modules
 ENV NODE_ENV=production
 EXPOSE 8787
 
-CMD ["bun", "run", "--filter", "api", "start"]
+CMD ["bun", "run", "--cwd", "apps/api", "start"]
