@@ -12,7 +12,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function runGitCommand(args: string[], cwd?: string): Promise<string> {
   try {
-    const { stdout, stderr } = await execFileAsync("git", args, {
+    const { stdout } = await execFileAsync("git", args, {
       cwd,
       env: process.env,
       maxBuffer: 1024 * 1024 * 10,
@@ -33,12 +33,6 @@ async function runGitCommand(args: string[], cwd?: string): Promise<string> {
         ? redact(error.message)
         : "Unknown git execution error while running git command";
     const command = ["git", ...args.map(redact)].join(" ");
-    const details = `Failed command: ${command}${cwd ? ` (cwd: ${cwd})` : ""}`;
-    throw new Error(`${details}\n${message}`);
-      error instanceof Error
-        ? error.message
-        : "Unknown git execution error while running git command";
-    const command = ["git", ...args].join(" ");
     const details = `Failed command: ${command}${cwd ? ` (cwd: ${cwd})` : ""}`;
     throw new Error(`${details}\n${message}`);
   }
