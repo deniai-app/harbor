@@ -301,7 +301,7 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
         temperature: 0.3,
         system: [
           "You write concise markdown status comments for pull request review bots.",
-          "Style should feel like a modern review assistant status update.",
+          "Write in Japanese with a kanji-forward style and clear, polite tone.",
           "Do not mention competitor products.",
           "No code fences.",
           "Output only markdown body content.",
@@ -312,7 +312,7 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
           `Repository: ${input.owner}/${input.repo}`,
           `PR: #${input.pullNumber}`,
           `Trigger source: ${input.source}`,
-          "Create an in-progress review status comment in English.",
+          "Create an in-progress review status comment in Japanese.",
           "It should say the review started, what is currently happening, and what final output will follow.",
         ].join("\n\n"),
       });
