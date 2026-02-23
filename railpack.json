@@ -1,10 +1,43 @@
 {
   "$schema": "https://schema.railpack.com",
+
+  "buildAptPackages": [
+    "git",
+    "ca-certificates"
+  ],
+
+  "caches": {
+    "bun": {
+      "directory": "/root/.bun/install/cache",
+      "type": "shared"
+    }
+  },
+
+  "steps": {
+    "install": {
+      "commands": [
+        {
+          "cmd": "bun install",
+          "customName": "Install workspace dependencies"
+        }
+      ],
+      "caches": ["bun"]
+    }
+  },
+
   "deploy": {
-    "startCommand": "bun run start",
+    "startCommand": "bun run --filter api start",
     "aptPackages": [
       "git",
       "ca-certificates"
+    ],
+    "inputs": [
+      {
+        "step": "install",
+        "include": [
+          "."
+        ]
+      }
     ]
   }
 }
