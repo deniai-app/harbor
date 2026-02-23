@@ -1,6 +1,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export function verifyGitHubSignature(payload: string, secret: string, signatureHeader?: string): boolean {
+export function verifyGitHubSignature(
+  payload: string,
+  secret: string,
+  signatureHeader?: string,
+): boolean {
   if (!signatureHeader) {
     return false;
   }

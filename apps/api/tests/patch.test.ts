@@ -31,14 +31,16 @@ describe("extractPatchByFile", () => {
 
     const patchMap = extractPatchByFile(diff);
 
-    expect(patchMap.get("src/a.ts")).toBe([
-      "@@ -1,2 +1,2 @@",
-      "-const a = 1;",
-      "+const a = 2;",
-      "@@ -10,1 +10,2 @@",
-      " console.log(a);",
-      "+console.log('x');",
-    ].join("\n"));
+    expect(patchMap.get("src/a.ts")).toBe(
+      [
+        "@@ -1,2 +1,2 @@",
+        "-const a = 1;",
+        "+const a = 2;",
+        "@@ -10,1 +10,2 @@",
+        " console.log(a);",
+        "+console.log('x');",
+      ].join("\n"),
+    );
     expect(patchMap.has("src/b.ts")).toBe(false);
     expect(patchMap.get("src/c.ts")).toContain("\\ No newline at end of file");
   });
@@ -76,15 +78,7 @@ describe("buildAddedLineToPositionMap", () => {
   });
 
   it("handles multiple hunks", () => {
-    const patch = [
-      "@@ -1,1 +1,1 @@",
-      "-a",
-      "+b",
-      "@@ -10,2 +10,3 @@",
-      " c",
-      "+d",
-      " e",
-    ].join("\n");
+    const patch = ["@@ -1,1 +1,1 @@", "-a", "+b", "@@ -10,2 +10,3 @@", " c", "+d", " e"].join("\n");
 
     const map = buildAddedLineToPositionMap(patch);
 
@@ -93,12 +87,7 @@ describe("buildAddedLineToPositionMap", () => {
   });
 
   it("ignores no-newline markers", () => {
-    const patch = [
-      "@@ -1 +1 @@",
-      "-old",
-      "+new",
-      "\\ No newline at end of file",
-    ].join("\n");
+    const patch = ["@@ -1 +1 @@", "-old", "+new", "\\ No newline at end of file"].join("\n");
 
     const map = buildAddedLineToPositionMap(patch);
     expect(map.get(1)).toBe(2);

@@ -46,7 +46,9 @@ async function loadPrivateKey(): Promise<string> {
     return key.trim();
   }
 
-  throw new Error("Missing GitHub private key. Set GITHUB_PRIVATE_KEY_PEM or GITHUB_PRIVATE_KEY_PATH.");
+  throw new Error(
+    "Missing GitHub private key. Set GITHUB_PRIVATE_KEY_PEM or GITHUB_PRIVATE_KEY_PATH.",
+  );
 }
 
 export async function loadConfigFromEnv(): Promise<AppConfig> {

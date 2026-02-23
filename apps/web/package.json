@@ -7,9 +7,10 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "oxlint -c ../../.oxlintrc.json .",
-    "lint:fix": "oxlint -c ../../.oxlintrc.json --fix .",
-    "typecheck": "tsc --noEmit"
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt",
+    "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
     "@workspace/ui": "workspace:*",
@@ -24,6 +25,7 @@
     "@types/node": "^25.1.0",
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
+    "@typescript/native-preview": "^7.0.0-dev.20260223.1",
     "@workspace/typescript-config": "workspace:*",
     "typescript": "^5.9.3"
   }

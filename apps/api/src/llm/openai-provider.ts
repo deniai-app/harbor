@@ -172,13 +172,19 @@ function normalizeResult(raw: unknown): ReviewSuggestionResult {
     }
   }
 
-  const overallStatus = payload.overallStatus === "ok" ? "ok" : payload.overallStatus === "uncertain" ? "uncertain" : undefined;
+  const overallStatus =
+    payload.overallStatus === "ok"
+      ? "ok"
+      : payload.overallStatus === "uncertain"
+        ? "uncertain"
+        : undefined;
 
   return {
     suggestions,
     overallStatus,
     allowAutoApprove: payload.allowAutoApprove === true,
-    overallComment: typeof payload.overallComment === "string" ? payload.overallComment.trim() : undefined,
+    overallComment:
+      typeof payload.overallComment === "string" ? payload.overallComment.trim() : undefined,
   };
 }
 
@@ -200,7 +206,8 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
       prompt: buildUserPrompt(input),
       tools: {
         list_dir: tool({
-          description: "List repository paths. This must be the first tool call in each PR review and use depth=3.",
+          description:
+            "List repository paths. This must be the first tool call in each PR review and use depth=3.",
           inputSchema: z.object({
             path: z.string().default("."),
             depth: z.number().int().default(3),
@@ -294,7 +301,9 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
     }
   }
 
-  async generateReviewingComment(input: GenerateReviewingCommentInput): Promise<string | undefined> {
+  async generateReviewingComment(
+    input: GenerateReviewingCommentInput,
+  ): Promise<string | undefined> {
     try {
       const result = await generateText({
         model: this.modelFactory(this.model),

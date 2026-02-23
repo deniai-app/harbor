@@ -4,7 +4,9 @@ import { Button } from "@workspace/ui/components/button";
 export default function Page() {
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-4xl flex-col justify-center px-6 py-16">
-      <p className="text-sm font-semibold uppercase tracking-[0.2em] text-zinc-500">Deni AI Harbor</p>
+      <p className="text-sm font-semibold uppercase tracking-[0.2em] text-zinc-500">
+        Deni AI Harbor
+      </p>
       <h1 className="mt-4 text-4xl font-semibold tracking-tight text-zinc-900 sm:text-5xl">
         Automatically post safe PR suggestions as GitHub review comments
       </h1>

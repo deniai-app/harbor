@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/index.ts",
-    "build": "tsc --noEmit",
+    "build": "tsgo --noEmit",
     "start": "bun src/index.ts",
     "test": "vitest run",
     "lint": "oxlint -c ../../.oxlintrc.json .",
     "lint:fix": "oxlint -c ../../.oxlintrc.json --fix .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.30",
@@ -24,10 +24,9 @@
   },
   "devDependencies": {
     "@types/node": "^25.1.0",
+    "@typescript/native-preview": "^7.0.0-dev.20260223.1",
     "@workspace/typescript-config": "workspace:*",
     "oxlint": "^1.49.0",
-    "tsx": "^4.20.6",
-    "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   }
 }

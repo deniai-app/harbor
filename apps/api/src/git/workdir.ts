@@ -101,7 +101,15 @@ export async function createWorkdirSession(params: {
   await runGit(["clone", "--depth", "1", "--no-tags", authCloneUrl, workdir]);
 
   const pullHeadRef = `refs/pull/${params.pullNumber}/head`;
-  await runGit(["-C", workdir, "fetch", "--depth", "1", "origin", `+${pullHeadRef}:${pullHeadRef}`]);
+  await runGit([
+    "-C",
+    workdir,
+    "fetch",
+    "--depth",
+    "1",
+    "origin",
+    `+${pullHeadRef}:${pullHeadRef}`,
+  ]);
   await runGit(["-C", workdir, "checkout", "--detach", pullHeadRef]);
 
   if (params.headSha) {

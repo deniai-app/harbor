@@ -24,7 +24,10 @@ export default function SettingsPage() {
         <h2 className="text-lg font-medium text-zinc-900">Required environment variables</h2>
         <ul className="mt-4 space-y-2">
           {envKeys.map((key) => (
-            <li className="rounded-md bg-zinc-50 px-3 py-2 font-mono text-sm text-zinc-700" key={key}>
+            <li
+              className="rounded-md bg-zinc-50 px-3 py-2 font-mono text-sm text-zinc-700"
+              key={key}
+            >
               {key}
             </li>
           ))}

@@ -137,7 +137,8 @@ function isPullRequestReviewAction(action: string): action is "submitted" | "edi
 }
 
 const GITHUB_USER_ID_MENTION_PATTERN = /<@([a-z0-9_-]+)>/gi;
-const GITHUB_USERNAME_MENTION_PATTERN = /(^|[^a-z0-9-])@([a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)(?=[^a-z0-9-]|$)/gi;
+const GITHUB_USERNAME_MENTION_PATTERN =
+  /(^|[^a-z0-9-])@([a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)(?=[^a-z0-9-]|$)/gi;
 
 interface MentionTarget {
   kind: "user_id" | "username";
@@ -205,7 +206,10 @@ function containsMention(body: string, mention: string): boolean {
 }
 
 function isDeniAiSystemComment(body: string): boolean {
-  return body.includes("<!-- deniai:reviewing:start -->") || body.includes("<!-- deniai:reviewing:end -->");
+  return (
+    body.includes("<!-- deniai:reviewing:start -->") ||
+    body.includes("<!-- deniai:reviewing:end -->")
+  );
 }
 
 async function findLatestReviewingCommentId(params: {
@@ -265,7 +269,10 @@ async function upsertReviewingComment(params: {
       );
       return existingCommentId;
     } catch (error) {
-      console.warn(`[${params.context}] Failed to update reviewing comment ${existingCommentId}`, error);
+      console.warn(
+        `[${params.context}] Failed to update reviewing comment ${existingCommentId}`,
+        error,
+      );
     }
   }
 
@@ -369,7 +376,10 @@ async function buildReviewingComment(params: {
         coreBody = aiBody.trim();
       }
     } catch (error) {
-      console.warn("[mention-trigger] Failed to generate AI reviewing comment. Falling back to template.", error);
+      console.warn(
+        "[mention-trigger] Failed to generate AI reviewing comment. Falling back to template.",
+        error,
+      );
     }
   }
 
@@ -622,7 +632,9 @@ async function runReviewForPullRequest(
   }
 
   if (!headSha) {
-    throw new Error(`[review] Missing head SHA for ${params.owner}/${params.repo}#${params.pullNumber}`);
+    throw new Error(
+      `[review] Missing head SHA for ${params.owner}/${params.repo}#${params.pullNumber}`,
+    );
   }
 
   const files = await getPullRequestFiles({
@@ -673,7 +685,9 @@ async function runReviewForPullRequest(
       changedFiles: mergedFiles,
       virtualIdeTools,
     });
-    console.info(`[review] LLM produced ${llmResult.suggestions.length} suggestion candidates for ${params.owner}/${params.repo}#${params.pullNumber}`);
+    console.info(
+      `[review] LLM produced ${llmResult.suggestions.length} suggestion candidates for ${params.owner}/${params.repo}#${params.pullNumber}`,
+    );
 
     const explicitReviewOk = llmResult.overallComment?.trim() === REVIEW_OK_COMMENT;
     const explicitApprovalKey = llmResult.allowAutoApprove === true;
@@ -691,7 +705,9 @@ async function runReviewForPullRequest(
         event: "APPROVE",
         body: REVIEW_OK_COMMENT,
       });
-      console.info(`[review] Approved ${params.owner}/${params.repo}#${params.pullNumber} (no actionable issues).`);
+      console.info(
+        `[review] Approved ${params.owner}/${params.repo}#${params.pullNumber} (no actionable issues).`,
+      );
       return {
         status: "approved",
         inlineCommentCount: 0,
@@ -712,7 +728,9 @@ async function runReviewForPullRequest(
     });
 
     if (!reviewPayload) {
-      console.info(`[review] No safe suggestions for ${params.owner}/${params.repo}#${params.pullNumber}`);
+      console.info(
+        `[review] No safe suggestions for ${params.owner}/${params.repo}#${params.pullNumber}`,
+      );
       return {
         status: "no_suggestions",
         inlineCommentCount: 0,
@@ -739,7 +757,9 @@ async function runReviewForPullRequest(
     };
   } finally {
     await workdirSession.cleanup();
-    console.info(`[review] Finished review for ${params.owner}/${params.repo}#${params.pullNumber}`);
+    console.info(
+      `[review] Finished review for ${params.owner}/${params.repo}#${params.pullNumber}`,
+    );
   }
 }
 
@@ -762,7 +782,9 @@ export async function processPullRequestEvent(
   const pullNumber = payload.pull_request.number;
   const startedAt = Date.now();
 
-  console.info(`[pull_request] Trigger review for ${owner}/${repo}#${pullNumber} action=${payload.action}`);
+  console.info(
+    `[pull_request] Trigger review for ${owner}/${repo}#${pullNumber} action=${payload.action}`,
+  );
 
   const token = await deps.auth.getInstallationToken(installationId);
 
@@ -823,7 +845,9 @@ export async function processPullRequestEvent(
           error: reviewError,
         }),
       });
-      console.info(`[pull_request] Finalized reviewing comment ${progressCommentId} on ${owner}/${repo}#${pullNumber}`);
+      console.info(
+        `[pull_request] Finalized reviewing comment ${progressCommentId} on ${owner}/${repo}#${pullNumber}`,
+      );
     } catch (error) {
       console.warn("[pull_request] Failed to finalize reviewing comment", error);
     }
@@ -874,7 +898,9 @@ export async function processIssueCommentEvent(
   const pullNumber = payload.issue.number;
   const startedAt = Date.now();
 
-  console.info(`[issue_comment] Mention detected. Trigger review for ${owner}/${repo}#${pullNumber}`);
+  console.info(
+    `[issue_comment] Mention detected. Trigger review for ${owner}/${repo}#${pullNumber}`,
+  );
   const token = await deps.auth.getInstallationToken(installationId);
 
   const progressCommentId = await notifyMentionTriggered({
@@ -921,7 +947,9 @@ export async function processIssueCommentEvent(
           error: reviewError,
         }),
       });
-      console.info(`[mention-trigger] Finalized reviewing comment ${progressCommentId} on ${owner}/${repo}#${pullNumber}`);
+      console.info(
+        `[mention-trigger] Finalized reviewing comment ${progressCommentId} on ${owner}/${repo}#${pullNumber}`,
+      );
     } catch (error) {
       console.warn("[mention-trigger] Failed to finalize reviewing comment", error);
     }
@@ -966,7 +994,9 @@ export async function processPullRequestReviewEvent(
   const pullNumber = payload.pull_request.number;
   const startedAt = Date.now();
 
-  console.info(`[pull_request_review] Mention detected. Trigger review for ${owner}/${repo}#${pullNumber}`);
+  console.info(
+    `[pull_request_review] Mention detected. Trigger review for ${owner}/${repo}#${pullNumber}`,
+  );
   const token = await deps.auth.getInstallationToken(installationId);
 
   const progressCommentId = await notifyMentionTriggered({
@@ -1013,7 +1043,9 @@ export async function processPullRequestReviewEvent(
           error: reviewError,
         }),
       });
-      console.info(`[mention-trigger] Finalized reviewing comment ${progressCommentId} on ${owner}/${repo}#${pullNumber}`);
+      console.info(
+        `[mention-trigger] Finalized reviewing comment ${progressCommentId} on ${owner}/${repo}#${pullNumber}`,
+      );
     } catch (error) {
       console.warn("[mention-trigger] Failed to finalize reviewing comment", error);
     }
@@ -1057,7 +1089,9 @@ export async function processPullRequestReviewCommentEvent(
   const pullNumber = payload.pull_request.number;
   const startedAt = Date.now();
 
-  console.info(`[pull_request_review_comment] Mention detected. Trigger review for ${owner}/${repo}#${pullNumber}`);
+  console.info(
+    `[pull_request_review_comment] Mention detected. Trigger review for ${owner}/${repo}#${pullNumber}`,
+  );
   const token = await deps.auth.getInstallationToken(installationId);
 
   const progressCommentId = await notifyMentionTriggered({
