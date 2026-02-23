@@ -10,7 +10,27 @@ const MAX_GIT_RETRIES = 2;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Unknown git execution error while running git command";
+}
+
+function describeCommand(args: string[], cwd?: string): string {
+  const command = ["git", ...args].join(" ");
+  return `Failed command: ${command}${cwd ? ` (cwd: ${cwd})` : ""}`;
+}
+
 async function runGitCommand(args: string[], cwd?: string): Promise<string> {
+  const commandLine = describeCommand(args, cwd);
+  const redact = (value: string) => value.replace(/https:\/\/(?:[^@\s]+)@/g, "https://***@");
+
   try {
     const { stdout } = await execFileAsync("git", args, {
       cwd,
@@ -20,16 +40,11 @@ async function runGitCommand(args: string[], cwd?: string): Promise<string> {
 
     return stdout.trim();
   } catch (error: unknown) {
-    const redact = (value: string) => value.replace(/https:\/\/[^@\s]+@/g, "https://***@");
-    const message =
-      error instanceof Error
-        ? redact(error.message)
-        : "Unknown git execution error while running git command";
-    const command = ["git", ...args.map(redact)].join(" ");
-    const details = `Failed command: ${command}${cwd ? ` (cwd: ${cwd})` : ""}`;
-    throw new Error(`${details}\n${message}`);
+    const message = toErrorMessage(error);
+    throw new Error(`${redact(commandLine)}\n${redact(message)}`);
   }
 }
+
 
 async function runGitWithRetry(args: string[], cwd?: string, attempt = 1): Promise<string> {
   try {
@@ -82,10 +97,10 @@ function resolveCloneUrl(params: {
       throw new Error(`Unsupported clone URL protocol: ${parsed.protocol}`);
     }
     return parsed.toString();
-  } catch (error) {
+  } catch (error: unknown) {
     console.warn(
       `[workdir] Invalid clone_url for ${params.repoOwner}/${params.repoName}. Falling back to canonical GitHub URL.`,
-      error,
+      toErrorMessage(error),
     );
     return buildDefaultCloneUrl(params.repoOwner, params.repoName);
   }
