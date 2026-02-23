@@ -94,6 +94,28 @@ function extractJson(content: string): string {
   return content.slice(start, end + 1);
 }
 
+function dedupeConsecutiveDuplicateBlock(content: string): string {
+  const lines = content.trim().split("\n").map((line) => line.trimEnd());
+  if (lines.length < 2) {
+    return content.trim();
+  }
+
+  for (let size = 1; size <= Math.floor(lines.length / 2); size += 1) {
+    const first = lines.slice(0, size).join("\n");
+    const second = lines.slice(size, size * 2).join("\n");
+    if (size > 0 && first === second) {
+      return first.trim();
+    }
+
+    const third = lines.slice(size * 2, size * 3).join("\n");
+    if (third && first === third) {
+      return first.trim();
+    }
+  }
+
+  return content.trim();
+}
+
 function sanitizeSuggestionBody(body: string): string | null {
   if (!body.includes("```suggestion")) {
     return null;
@@ -109,12 +131,17 @@ function sanitizeSuggestionBody(body: string): string | null {
     return null;
   }
 
-  const lines = blockContent.split("\n");
+  const cleanBlockContent = dedupeConsecutiveDuplicateBlock(blockContent);
+  const lines = cleanBlockContent.split("\n");
   if (lines.length === 0 || lines.length > 10) {
     return null;
   }
 
-  return body.trim();
+  const before = body.slice(0, blockMatch.index ?? 0);
+  const after = body.slice((blockMatch.index ?? 0) + blockMatch[0].length);
+  const cleanBody = `${before}\n\`\`\`suggestion\n${cleanBlockContent}\n\`\`\`${after}`.trim();
+
+  return cleanBody;
 }
 
 function extractSuggestionHeadline(body: string): string {
