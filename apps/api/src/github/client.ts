@@ -1,35 +1,40 @@
+import { Octokit } from "@octokit/rest";
 import type { GitHubPullRequestFile } from "@workspace/shared";
 
-const GITHUB_API_BASE = "https://api.github.com";
-
-interface GitHubRequestInput {
-  token: string;
-  method?: string;
-  path: string;
-  headers?: Record<string, string>;
-  body?: unknown;
-}
-
-async function githubRequest({ token, method = "GET", path, headers, body }: GitHubRequestInput): Promise<Response> {
-  return fetch(`${GITHUB_API_BASE}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      ...(body ? { "Content-Type": "application/json" } : {}),
-      ...headers,
-    },
-    body: body ? JSON.stringify(body) : undefined,
+function buildClient(token: string): Octokit {
+  return new Octokit({
+    auth: token,
   });
 }
 
-async function parseResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    const raw = await response.text();
-    throw new Error(`GitHub API error ${response.status}: ${raw}`);
+async function handleApiResponse<T>(operation: () => Promise<{ data: T }>): Promise<T> {
+  try {
+    const response = await operation();
+    return response.data;
+  } catch (error) {
+    const anyError = error as {
+      status?: number;
+      message?: string;
+      response?: { data?: unknown };
+    };
+
+    const status = anyError.status;
+    const details = (() => {
+      const body = anyError.response?.data;
+      if (typeof body === "string") {
+        return body;
+      }
+
+      if (body && typeof body === "object") {
+        return JSON.stringify(body);
+      }
+
+      return undefined;
+    })();
+
+    const suffix = details ? `: ${details}` : anyError.message ? `: ${anyError.message}` : "";
+    throw new Error(`GitHub API error ${status ?? "unknown"}${suffix}`);
   }
-  return (await response.json()) as T;
 }
 
 export async function getPullRequestFiles(params: {
@@ -38,24 +43,16 @@ export async function getPullRequestFiles(params: {
   repo: string;
   pullNumber: number;
 }): Promise<GitHubPullRequestFile[]> {
-  const files: GitHubPullRequestFile[] = [];
-  let page = 1;
+  const octokit = buildClient(params.token);
 
-  while (true) {
-    const response = await githubRequest({
-      token: params.token,
-      path: `/repos/${params.owner}/${params.repo}/pulls/${params.pullNumber}/files?per_page=100&page=${page}`,
-    });
-    const data = await parseResponse<GitHubPullRequestFile[]>(response);
-    files.push(...data);
+  const allFiles = await octokit.paginate(octokit.rest.pulls.listFiles, {
+    owner: params.owner,
+    repo: params.repo,
+    pull_number: params.pullNumber,
+    per_page: 100,
+  });
 
-    if (data.length < 100) {
-      break;
-    }
-    page += 1;
-  }
-
-  return files;
+  return allFiles as GitHubPullRequestFile[];
 }
 
 export async function getPullRequestDiff(params: {
@@ -64,20 +61,23 @@ export async function getPullRequestDiff(params: {
   repo: string;
   pullNumber: number;
 }): Promise<string> {
-  const response = await githubRequest({
-    token: params.token,
-    path: `/repos/${params.owner}/${params.repo}/pulls/${params.pullNumber}`,
-    headers: {
-      Accept: "application/vnd.github.v3.diff",
-    },
+  const octokit = buildClient(params.token);
+
+  return handleApiResponse(async () => {
+    const response = await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
+      owner: params.owner,
+      repo: params.repo,
+      pull_number: params.pullNumber,
+      mediaType: {
+        previews: [],
+      },
+      headers: {
+        accept: "application/vnd.github.v3.diff",
+      },
+    });
+
+    return { data: response.data as unknown as string };
   });
-
-  if (!response.ok) {
-    const raw = await response.text();
-    throw new Error(`GitHub diff error ${response.status}: ${raw}`);
-  }
-
-  return await response.text();
 }
 
 interface PullRequestHeadResponse {
@@ -95,14 +95,20 @@ export async function getPullRequestHead(params: {
   repo: string;
   pullNumber: number;
 }): Promise<{ headSha: string; cloneUrl?: string }> {
-  const response = await githubRequest({
-    token: params.token,
-    path: `/repos/${params.owner}/${params.repo}/pulls/${params.pullNumber}`,
+  const octokit = buildClient(params.token);
+
+  const data = await handleApiResponse(async () => {
+    return octokit.rest.pulls.get({
+      owner: params.owner,
+      repo: params.repo,
+      pull_number: params.pullNumber,
+    });
   });
-  const data = await parseResponse<PullRequestHeadResponse>(response);
+
+  const typed = data as unknown as PullRequestHeadResponse;
   return {
-    headSha: data.head.sha,
-    cloneUrl: data.head.repo?.clone_url ?? undefined,
+    headSha: typed.head.sha,
+    cloneUrl: typed.head.repo?.clone_url ?? undefined,
   };
 }
 
@@ -113,22 +119,18 @@ export async function createIssueComment(params: {
   issueNumber: number;
   body: string;
 }): Promise<number> {
-  const response = await githubRequest({
-    token: params.token,
-    method: "POST",
-    path: `/repos/${params.owner}/${params.repo}/issues/${params.issueNumber}/comments`,
-    body: {
+  const octokit = buildClient(params.token);
+
+  const data = await handleApiResponse(async () =>
+    octokit.rest.issues.createComment({
+      owner: params.owner,
+      repo: params.repo,
+      issue_number: params.issueNumber,
       body: params.body,
-    },
-  });
+    }),
+  );
 
-  if (!response.ok) {
-    const raw = await response.text();
-    throw new Error(`Failed to create issue comment ${response.status}: ${raw}`);
-  }
-
-  const data = (await response.json()) as { id?: number };
-  const commentId = data.id;
+  const commentId = (data as { id?: number }).id;
   if (typeof commentId !== "number" || !Number.isInteger(commentId)) {
     throw new Error("Failed to parse created issue comment id.");
   }
@@ -142,19 +144,16 @@ export async function updateIssueComment(params: {
   commentId: number;
   body: string;
 }): Promise<void> {
-  const response = await githubRequest({
-    token: params.token,
-    method: "PATCH",
-    path: `/repos/${params.owner}/${params.repo}/issues/comments/${params.commentId}`,
-    body: {
-      body: params.body,
-    },
-  });
+  const octokit = buildClient(params.token);
 
-  if (!response.ok) {
-    const raw = await response.text();
-    throw new Error(`Failed to update issue comment ${response.status}: ${raw}`);
-  }
+  await handleApiResponse(async () =>
+    octokit.rest.issues.updateComment({
+      owner: params.owner,
+      repo: params.repo,
+      comment_id: params.commentId,
+      body: params.body,
+    }),
+  );
 }
 
 export async function createIssueCommentReaction(params: {
@@ -163,19 +162,16 @@ export async function createIssueCommentReaction(params: {
   repo: string;
   commentId: number;
 }): Promise<void> {
-  const response = await githubRequest({
-    token: params.token,
-    method: "POST",
-    path: `/repos/${params.owner}/${params.repo}/issues/comments/${params.commentId}/reactions`,
-    body: {
-      content: "eyes",
-    },
-  });
+  const octokit = buildClient(params.token);
 
-  if (!response.ok) {
-    const raw = await response.text();
-    throw new Error(`Failed to create issue comment reaction ${response.status}: ${raw}`);
-  }
+  await handleApiResponse(async () =>
+    octokit.rest.reactions.createForIssueComment({
+      owner: params.owner,
+      repo: params.repo,
+      comment_id: params.commentId,
+      content: "eyes",
+    }),
+  );
 }
 
 export async function createPullRequestReviewCommentReaction(params: {
@@ -184,19 +180,16 @@ export async function createPullRequestReviewCommentReaction(params: {
   repo: string;
   commentId: number;
 }): Promise<void> {
-  const response = await githubRequest({
-    token: params.token,
-    method: "POST",
-    path: `/repos/${params.owner}/${params.repo}/pulls/comments/${params.commentId}/reactions`,
-    body: {
-      content: "eyes",
-    },
-  });
+  const octokit = buildClient(params.token);
 
-  if (!response.ok) {
-    const raw = await response.text();
-    throw new Error(`Failed to create PR review comment reaction ${response.status}: ${raw}`);
-  }
+  await handleApiResponse(async () =>
+    octokit.rest.reactions.createForPullRequestReviewComment({
+      owner: params.owner,
+      repo: params.repo,
+      comment_id: params.commentId,
+      content: "eyes",
+    }),
+  );
 }
 
 export interface ReviewCommentInput {
@@ -216,6 +209,8 @@ export async function createPullRequestReview(params: {
   body?: string;
   comments?: ReviewCommentInput[];
 }): Promise<void> {
+  const octokit = buildClient(params.token);
+
   const payload: {
     event: PullRequestReviewEvent;
     body?: string;
@@ -232,15 +227,14 @@ export async function createPullRequestReview(params: {
     payload.comments = params.comments;
   }
 
-  const response = await githubRequest({
-    token: params.token,
-    method: "POST",
-    path: `/repos/${params.owner}/${params.repo}/pulls/${params.pullNumber}/reviews`,
-    body: payload,
-  });
-
-  if (!response.ok) {
-    const raw = await response.text();
-    throw new Error(`Failed to create review ${response.status}: ${raw}`);
-  }
+  await handleApiResponse(async () =>
+    octokit.rest.pulls.createReview({
+      owner: params.owner,
+      repo: params.repo,
+      pull_number: params.pullNumber,
+      event: params.event ?? "COMMENT",
+      body: payload.body,
+      comments: payload.comments,
+    }),
+  );
 }
