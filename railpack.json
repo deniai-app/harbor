@@ -13,7 +13,7 @@
   "steps": {
     "install": {
       "commands": [
-        "sh -c 'cd /app && bun install --frozen-lockfile --filter api'"
+        "sh -c 'cd /app && bun install --frozen-lockfile'"
       ],
       "caches": [
         "bun"
@@ -21,7 +21,7 @@
     }
   },
   "deploy": {
-    "startCommand": "bun run --filter api start",
+    "startCommand": "sh -c 'cd /app/apps/api && bun run start'" ,
     "aptPackages": [
       "git",
       "ca-certificates"

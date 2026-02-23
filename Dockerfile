@@ -11,7 +11,7 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/ui/package.json ./packages/ui/
 COPY packages/typescript-config/package.json ./packages/typescript-config/
 
-RUN bun install --frozen-lockfile --filter api
+RUN bun install --frozen-lockfile
 
 FROM oven/bun:1.3.9-alpine AS runtime
 WORKDIR /app
@@ -27,4 +27,4 @@ COPY --from=deps /app/node_modules /app/node_modules
 ENV NODE_ENV=production
 EXPOSE 8787
 
-CMD ["bun", "run", "--filter", "api", "start"]
+CMD ["bun", "run", "--cwd", "apps/api", "start"]
