@@ -30,6 +30,7 @@ Run from repo root unless noted.
 - Linting/formatting tools: `oxlint` and `oxfmt`.
 - File naming: prefer lowercase kebab-case for modules (example: `process-pr.ts`).
 - Keep functions focused; isolate GitHub/API side effects in client/service modules.
+- Please use English
 
 ## Testing Guidelines
 - Framework: Vitest (`apps/api/tests`).
