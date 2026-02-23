@@ -47,6 +47,7 @@ interface IssueCommentWebhookPayload {
   };
   repository: {
     name: string;
+    clone_url?: string;
     owner: {
       login: string;
     };
@@ -68,6 +69,7 @@ interface PullRequestReviewCommentWebhookPayload {
   };
   repository: {
     name: string;
+    clone_url?: string;
     owner: {
       login: string;
     };
@@ -88,6 +90,7 @@ interface PullRequestReviewWebhookPayload {
   };
   repository: {
     name: string;
+    clone_url?: string;
     owner: {
       login: string;
     };
@@ -139,6 +142,7 @@ function isPullRequestReviewAction(action: string): action is "submitted" | "edi
 const GITHUB_USER_ID_MENTION_PATTERN = /<@([a-z0-9_-]+)>/gi;
 const GITHUB_USERNAME_MENTION_PATTERN =
   /(^|[^a-z0-9-])@([a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)(?=[^a-z0-9-]|$)/gi;
+const MAX_FALLBACK_SUGGESTIONS = 12;
 
 interface MentionTarget {
   kind: "user_id" | "username";
@@ -170,18 +174,25 @@ function parseMentionTarget(rawMention: string): MentionTarget | null {
   };
 }
 
+function stripCodeLikeSections(body: string): string {
+  return body
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`[^`]*`/g, "");
+}
+
 function extractMentionCandidates(body: string): { usernames: Set<string>; userIds: Set<string> } {
+  const normalizedBody = stripCodeLikeSections(body);
   const usernames = new Set<string>();
   const userIds = new Set<string>();
 
-  for (const match of body.matchAll(GITHUB_USER_ID_MENTION_PATTERN)) {
+  for (const match of normalizedBody.matchAll(GITHUB_USER_ID_MENTION_PATTERN)) {
     const id = match[1];
     if (id) {
       userIds.add(id.toLowerCase());
     }
   }
 
-  for (const match of body.matchAll(GITHUB_USERNAME_MENTION_PATTERN)) {
+  for (const match of normalizedBody.matchAll(GITHUB_USERNAME_MENTION_PATTERN)) {
     const username = match[2];
     if (username) {
       usernames.add(username.toLowerCase());
@@ -483,10 +494,14 @@ interface FallbackSuggestion {
 }
 
 function buildFallbackSection(items: FallbackSuggestion[]): string {
-  const lines = [`${items.length} suggestion(s) could not be attached inline:`];
+  const normalized = items.map((item) => `${item.path}:${item.line} (${item.reason})`);
+  const lines = [
+    `${items.length} suggestion(s) could not be attached inline:`,
+    ...normalized.slice(0, MAX_FALLBACK_SUGGESTIONS).map((line) => `- ${line}`),
+  ];
 
-  for (const item of items) {
-    lines.push(`- ${item.path}:${item.line} (${item.reason})`);
+  if (normalized.length > MAX_FALLBACK_SUGGESTIONS) {
+    lines.push(`- ... and ${normalized.length - MAX_FALLBACK_SUGGESTIONS} more`);
   }
 
   return lines.join("\n").trim();
@@ -501,17 +516,22 @@ function buildReviewPayload(params: {
   const comments: ReviewCommentInput[] = [];
   const fallbackItems: FallbackSuggestion[] = [];
   const seen = new Set<string>();
+  const fallbackSeen = new Set<string>();
 
   for (const suggestion of params.suggestions) {
     const path = normalizePath(suggestion.path);
     const file = fileMap.get(path);
 
     if (!file || !file.patch) {
-      fallbackItems.push({
-        path,
-        line: suggestion.line,
-        reason: "patch is unavailable",
-      });
+      const key = `${path}:${suggestion.line}:missing-patch`;
+      if (!fallbackSeen.has(key)) {
+        fallbackSeen.add(key);
+        fallbackItems.push({
+          path,
+          line: suggestion.line,
+          reason: "patch is unavailable",
+        });
+      }
       continue;
     }
 
@@ -519,11 +539,15 @@ function buildReviewPayload(params: {
     const position = positionMap.get(suggestion.line);
 
     if (!position) {
-      fallbackItems.push({
-        path,
-        line: suggestion.line,
-        reason: "line is not an added diff line",
-      });
+      const key = `${path}:${suggestion.line}:not-added`;
+      if (!fallbackSeen.has(key)) {
+        fallbackSeen.add(key);
+        fallbackItems.push({
+          path,
+          line: suggestion.line,
+          reason: "line is not an added diff line",
+        });
+      }
       continue;
     }
 
@@ -922,6 +946,7 @@ export async function processIssueCommentEvent(
         owner,
         repo,
         pullNumber,
+        cloneUrl: payload.repository.clone_url,
         token,
       },
       deps,
@@ -1018,6 +1043,7 @@ export async function processPullRequestReviewEvent(
         owner,
         repo,
         pullNumber,
+        cloneUrl: payload.repository.clone_url,
         token,
       },
       deps,
@@ -1113,6 +1139,7 @@ export async function processPullRequestReviewCommentEvent(
         owner,
         repo,
         pullNumber,
+        cloneUrl: payload.repository.clone_url,
         token,
       },
       deps,
