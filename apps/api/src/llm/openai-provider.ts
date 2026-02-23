@@ -312,7 +312,7 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
           `Repository: ${input.owner}/${input.repo}`,
           `PR: #${input.pullNumber}`,
           `Trigger source: ${input.source}`,
-          "Create an in-progress review status comment in English.",
+          "Create an in-progress review status comment in English (or codebase used language).",
           "It should say the review started, what is currently happening, and what final output will follow.",
         ].join("\n\n"),
       });

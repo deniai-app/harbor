@@ -137,6 +137,36 @@ export async function createIssueComment(params: {
   return commentId;
 }
 
+export interface IssueComment {
+  id: number;
+  body: string;
+}
+
+export async function listIssueComments(params: {
+  token: string;
+  owner: string;
+  repo: string;
+  issueNumber: number;
+}): Promise<IssueComment[]> {
+  const octokit = buildClient(params.token);
+
+  const allComments = await octokit.paginate(octokit.rest.issues.listComments, {
+    owner: params.owner,
+    repo: params.repo,
+    issue_number: params.issueNumber,
+    per_page: 100,
+    sort: "created",
+    direction: "asc",
+  });
+
+  return allComments
+    .map((comment) => ({
+      id: comment.id,
+      body: comment.body ?? "",
+    }))
+    .filter((comment) => Number.isInteger(comment.id) && comment.id > 0);
+}
+
 export async function updateIssueComment(params: {
   token: string;
   owner: string;
