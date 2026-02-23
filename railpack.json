@@ -22,7 +22,7 @@
       ],
       "commands": [
         {
-          "cmd": "cd /apps/api && bun install --frozen-lockfile",
+          "cmd": "cd apps/api && bun install --frozen-lockfile",
           "customName": "Install workspace dependencies"
         }
       ],
