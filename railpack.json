@@ -17,7 +17,7 @@
     "install": {
       "commands": [
         {
-          "cmd": "bun install",
+          "cmd": "bun install --frozen-lockfile",
           "customName": "Install workspace dependencies"
         }
       ],
