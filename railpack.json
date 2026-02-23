@@ -13,7 +13,7 @@
   "steps": {
     "install": {
       "commands": [
-        "sh -c 'cd /app && bun install --frozen-lockfile'"
+        "sh -c 'cd /app/apps/api && bun install --frozen-lockfile'"
       ],
       "caches": [
         "bun"
