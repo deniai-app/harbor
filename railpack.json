@@ -15,9 +15,15 @@
 
   "steps": {
     "install": {
+      "inputs": [
+        {
+          "local": true,
+          "include": ["." ]
+        }
+      ],
       "commands": [
         {
-          "cmd": "bun install --frozen-lockfile",
+          "cmd": "cd /app && bun install --frozen-lockfile",
           "customName": "Install workspace dependencies"
         }
       ],
