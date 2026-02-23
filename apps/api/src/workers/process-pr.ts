@@ -213,7 +213,13 @@ async function findLatestReviewingCommentId(params: {
   owner: string;
   repo: string;
   pullNumber: number;
-}): Promise<number | undefined> {
+  const comments = await listIssueComments({
+    token: params.token,
+    owner: params.owner,
+    repo: params.repo,
+    issueNumber: params.pullNumber,
+  });
+  comments.sort((a, b) => a.id - b.id);
   const comments = await listIssueComments({
     token: params.token,
     owner: params.owner,
