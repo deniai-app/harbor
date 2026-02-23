@@ -12,19 +12,8 @@
   },
   "steps": {
     "install": {
-      "inputs": [
-        {
-          "local": true,
-          "include": [
-            "."
-          ]
-        }
-      ],
       "commands": [
-        {
-          "cmd": "cd apps/api && bun install --frozen-lockfile",
-          "customName": "Install workspace dependencies"
-        }
+        "sh -c 'cd /app && bun install --frozen-lockfile'"
       ],
       "caches": [
         "bun"
