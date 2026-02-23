@@ -418,21 +418,51 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
       const parsed = JSON.parse(extractJson(content)) as unknown;
       const normalized = normalizeResult(parsed);
 
-      if (!normalized.overallComment && normalized.suggestions.length > 0) {
+      const seen = new Set<string>();
+      const validatedSuggestions: SuggestionCandidate[] = [];
+      for (const suggestion of normalized.suggestions) {
+        const key = `${suggestion.path}:${suggestion.line}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+
+        const preview = await previewSuggestion({
+          path: suggestion.path,
+          line: suggestion.line,
+          suggestionBody: suggestion.body,
+          virtualIdeTools: input.virtualIdeTools,
+        });
+        if (preview.isSafe) {
+          validatedSuggestions.push(suggestion);
+          continue;
+        }
+
+        console.warn(
+          `[review] Preview check failed for ${suggestion.path}:${suggestion.line} -> ${preview.reason}`,
+        );
+      }
+
+      const filtered = {
+        ...normalized,
+        suggestions: validatedSuggestions,
+      };
+
+      if (!filtered.overallComment && filtered.suggestions.length > 0) {
         const fallbackOverallComment = await this.generateOverallComment({
           owner: input.owner,
           repo: input.repo,
           pullNumber: input.pullNumber,
-          suggestions: normalized.suggestions,
+          suggestions: filtered.suggestions,
         });
 
         return {
-          ...normalized,
+          ...filtered,
           overallComment: fallbackOverallComment,
         };
       }
 
-      return normalized;
+      return filtered;
     } catch {
       return {
         suggestions: [],
