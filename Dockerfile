@@ -1,4 +1,4 @@
-FROM oven/bun:1.1-alpine AS deps
+FROM oven/bun:1.3.9-alpine AS deps
 WORKDIR /app
 
 RUN apk add --no-cache git ca-certificates
@@ -11,7 +11,7 @@ COPY packages/shared/package.json ./packages/shared/
 
 RUN bun install --frozen-lockfile
 
-FROM oven/bun:1.1-alpine AS runtime
+FROM oven/bun:1.3.9-alpine AS runtime
 WORKDIR /app
 
 RUN apk add --no-cache git ca-certificates
