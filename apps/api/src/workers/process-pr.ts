@@ -512,7 +512,12 @@ function buildReviewPayload(params: {
   overallComment?: string;
   files: GitHubPullRequestFile[];
 }): { comments: ReviewCommentInput[]; body?: string } | null {
-  const fileMap = new Map(params.files.map((file) => [file.filename, file]));
+  const fileMap = new Map<string, GitHubPullRequestFile>();
+  for (const file of params.files) {
+    fileMap.set(file.filename, file);
+    fileMap.set(normalizePath(file.filename), file);
+  }
+
   const comments: ReviewCommentInput[] = [];
   const fallbackItems: FallbackSuggestion[] = [];
   const seen = new Set<string>();
@@ -520,7 +525,7 @@ function buildReviewPayload(params: {
 
   for (const suggestion of params.suggestions) {
     const path = normalizePath(suggestion.path);
-    const file = fileMap.get(path);
+    const file = fileMap.get(path) ?? fileMap.get(`./${path}`);
 
     if (!file || !file.patch) {
       const key = `${path}:${suggestion.line}:missing-patch`;
