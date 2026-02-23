@@ -12,17 +12,9 @@
   },
   "steps": {
     "install": {
-      "inputs": [
-        {
-          "local": true,
-          "include": [
-            "."
-          ]
-        }
-      ],
       "commands": [
         {
-          "cmd": "cd apps/api && bun install --frozen-lockfile",
+          "cmd": "if [ -f /app/package.json ]; then cd /app; elif [ -f package.json ]; then cd .; elif [ -f /workspace/package.json ]; then cd /workspace; else cd .; fi && bun install --frozen-lockfile",
           "customName": "Install workspace dependencies"
         }
       ],
