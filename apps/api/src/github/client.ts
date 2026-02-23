@@ -158,25 +158,6 @@ export async function listIssueComments(params: {
     sort: "created",
     direction: "asc",
   });
-    owner: params.owner,
-    repo: params.repo,
-    issue_number: params.issueNumber,
-    per_page: 100,
-    sort: "created",
-    direction: "asc",
-  });
-    owner: params.owner,
-    repo: params.repo,
-    issue_number: params.issueNumber,
-    per_page: 100,
-    sort: "created",
-    direction: "asc",
-  });
-    owner: params.owner,
-    repo: params.repo,
-    issue_number: params.issueNumber,
-    per_page: 100,
-  });
 
   return allComments
     .map((comment) => ({

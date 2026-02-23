@@ -207,24 +207,13 @@ function containsMention(body: string, mention: string): boolean {
 function isDeniAiSystemComment(body: string): boolean {
   return body.includes("<!-- deniai:reviewing:start -->") || body.includes("<!-- deniai:reviewing:end -->");
 }
+
 async function findLatestReviewingCommentId(params: {
   token: string;
   owner: string;
   repo: string;
   pullNumber: number;
 }): Promise<number | undefined> {
-async function findLatestReviewingCommentId(params: {
-  token: string;
-  owner: string;
-  repo: string;
-  pullNumber: number;
-  const comments = await listIssueComments({
-    token: params.token,
-    owner: params.owner,
-    repo: params.repo,
-    issueNumber: params.pullNumber,
-  });
-
   const comments = await listIssueComments({
     token: params.token,
     owner: params.owner,
