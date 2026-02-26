@@ -56,6 +56,7 @@ interface ToolBudgets {
   readFile: number;
   searchText: number;
   readGuideline: number;
+  securityScan: number;
 }
 
 export interface VirtualIdeOptions {
@@ -77,6 +78,7 @@ export class VirtualIdeTools {
     readFile: 8,
     searchText: 5,
     readGuideline: 2,
+    securityScan: 2,
   };
 
   private totalReadLines = 0;
@@ -259,6 +261,52 @@ export class VirtualIdeTools {
     if (this.budgets.readGuideline < 0) {
       throw new Error("Tool budget exceeded for read_guidelines.");
     }
+  }
+
+
+  private async scanSecuritySinks(): Promise<Array<{ path: string; line: number; category: string; excerpt: string }>> {
+    this.ensureBudget("securityScan");
+
+    const patterns: Array<{ category: string; re: RegExp }> = [
+      { category: "xss", re: /innerHTML\s*=|dangerouslySetInnerHTML|document\.write\s*\(|onerror|onload|srcdoc/ },
+      { category: "injection", re: /eval\s*\(|new Function\s*\(|setTimeout\s*\(|setInterval\s*\(/ },
+      { category: "cmd-injection", re: /child_process\.|exec\(|spawn\(|execSync\(|spawnSync\(/ },
+      { category: "path-traversal", re: /\/\.\.|path\.join\(|path\.resolve\(.*req\.|req\.files|req\.params|req\.body|req\.query/ },
+    ];
+
+    const findings: Array<{ path: string; line: number; category: string; excerpt: string }> = [];
+
+    for (const path of this.changedFileSet) {
+      try {
+        const absolutePath = this.resolveRepoPath(path);
+        const fileStat = await stat(absolutePath);
+        if (!fileStat.isFile()) {
+          continue;
+        }
+
+        const content = await readFile(absolutePath, "utf-8");
+        const lines = content.split(/\r?\n/);
+
+        for (let i = 0; i < lines.length; i += 1) {
+          const line = lines[i] ?? "";
+          for (const { category, re } of patterns) {
+            if (re.test(line)) {
+              findings.push({
+                path,
+                line: i + 1,
+                category,
+                excerpt: line.trim().slice(0, 260),
+              });
+              break;
+            }
+          }
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return findings;
   }
 
   private async readGuidelineDocs(): Promise<Record<string, string>> {
