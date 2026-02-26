@@ -55,6 +55,7 @@ interface ToolBudgets {
   listDir: number;
   readFile: number;
   searchText: number;
+  readGuideline: number;
 }
 
 export interface VirtualIdeOptions {
@@ -75,6 +76,7 @@ export class VirtualIdeTools {
     listDir: 3,
     readFile: 8,
     searchText: 5,
+    readGuideline: 2,
   };
 
   private totalReadLines = 0;
@@ -118,6 +120,9 @@ export class VirtualIdeTools {
           throw new Error("search_text requires query.");
         }
         return this.searchText(args.query, args.max_results ?? 20);
+      }
+      case "read_guidelines": {
+        return this.readGuidelineDocs();
       }
       default:
         throw new Error(`Unknown tool: ${toolName}`);
@@ -247,6 +252,32 @@ export class VirtualIdeTools {
     this.totalReadLines += requestedLineCount;
 
     return numberedLines.join("\n");
+  }
+
+  private ensureGuidelineBudget(): void {
+    this.budgets.readGuideline -= 1;
+    if (this.budgets.readGuideline < 0) {
+      throw new Error("Tool budget exceeded for read_guidelines.");
+    }
+  }
+
+  private async readGuidelineDocs(): Promise<Record<string, string>> {
+    this.ensureGuidelineBudget();
+
+    const files = ["SECURITY.md", "PRODUCT.md", "README.md", "CONTRIBUTING.md"];
+    const out: Record<string, string> = {};
+
+    for (const file of files) {
+      try {
+        const absolutePath = this.resolveRepoPath(file);
+        const content = await readFile(absolutePath, "utf-8");
+        out[file] = content;
+      } catch {
+        out[file] = "";
+      }
+    }
+
+    return out;
   }
 
   private async searchText(query: string, maxResults: number): Promise<SearchHit[]> {

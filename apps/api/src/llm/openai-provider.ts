@@ -10,7 +10,7 @@ import {
   type ReviewSuggestionResult,
 } from "./types";
 
-const ALL_TOOL_NAMES = ["list_dir", "get_changed_files", "read_file", "search_text", "preview_suggestion"] as const;
+const ALL_TOOL_NAMES = ["list_dir", "get_changed_files", "read_file", "search_text", "read_guidelines", "preview_suggestion"] as const;
 
 function buildSystemPrompt(): string {
   return [
@@ -22,12 +22,14 @@ function buildSystemPrompt(): string {
     "- Only target added ('+') lines in diffs.",
     "- Do not propose out-of-diff edits.",
     "- Before finalizing suggestions, use preview_suggestion for each suggestion candidate to validate it can be applied safely to the file context.",
+    "- Before returning final JSON, call read_guidelines and incorporate project policy/security instructions from SECURITY.md and README/CONTRIBUTING when relevant.",
     "- 1 suggestion code block must be <= 10 lines.",
     "- If multiple high-confidence improvements exist, return multiple suggestions.",
     "- Target 3-8 suggestions when safe; return fewer only if confidence is limited.",
     "- No spec changes, no large refactors, no new dependencies.",
     "- If uncertain, return no suggestion.",
     "- You only have read-only virtual IDE tools.",
+    "- If guidance from read_guidelines is empty, do not guess policy-dependent rules; keep suggestions conservative.",
     "Review checklist (prioritize high impact first):",
     "- correctness/logic bugs, edge cases, error handling",
     "- security vulnerabilities and unsafe input handling",
@@ -371,6 +373,13 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
             return input.virtualIdeTools.call("search_text", { query, max_results });
           },
         }),
+        read_guidelines: tool({
+          description: "Read repository guidelines to apply project-specific review policy (security, style, and review rules).",
+          inputSchema: z.object({}),
+          execute: async () => {
+            return input.virtualIdeTools.call("read_guidelines", {});
+          },
+        }),
         preview_suggestion: tool({
           description: "Preview how a suggestion would look when applied to a file line for safety checks.",
           inputSchema: z.object({
@@ -388,12 +397,19 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
           },
         }),
       },
-      stopWhen: stepCountIs(20),
+      stopWhen: stepCountIs(24),
       prepareStep: ({ stepNumber }) => {
         if (stepNumber === 0) {
           return {
             toolChoice: { type: "tool", toolName: "list_dir" },
             activeTools: ["list_dir"],
+          };
+        }
+
+        if (stepNumber === 1) {
+          return {
+            toolChoice: { type: "tool", toolName: "read_guidelines" },
+            activeTools: ["read_guidelines"],
           };
         }
 
