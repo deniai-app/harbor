@@ -10,7 +10,7 @@ import {
   type ReviewSuggestionResult,
 } from "./types";
 
-const ALL_TOOL_NAMES = ["list_dir", "get_changed_files", "read_file", "search_text", "preview_suggestion"] as const;
+const ALL_TOOL_NAMES = ["list_dir", "get_changed_files", "read_file", "search_text", "read_guidelines", "scan_security_sinks", "preview_suggestion"] as const;
 
 function buildSystemPrompt(): string {
   return [
@@ -22,12 +22,14 @@ function buildSystemPrompt(): string {
     "- Only target added ('+') lines in diffs.",
     "- Do not propose out-of-diff edits.",
     "- Before finalizing suggestions, use preview_suggestion for each suggestion candidate to validate it can be applied safely to the file context.",
+    "- Before returning final JSON, call read_guidelines and incorporate project policy/security instructions from SECURITY.md and README/CONTRIBUTING when relevant.",
     "- 1 suggestion code block must be <= 10 lines.",
     "- If multiple high-confidence improvements exist, return multiple suggestions.",
     "- Target 3-8 suggestions when safe; return fewer only if confidence is limited.",
     "- No spec changes, no large refactors, no new dependencies.",
     "- If uncertain, return no suggestion.",
     "- You only have read-only virtual IDE tools.",
+    "- If guidance from read_guidelines is empty, do not guess policy-dependent rules; keep suggestions conservative.",
     "Review checklist (prioritize high impact first):",
     "- correctness/logic bugs, edge cases, error handling",
     "- security vulnerabilities and unsafe input handling",
@@ -36,6 +38,7 @@ function buildSystemPrompt(): string {
     "- API contract/data validation/backward compatibility",
     "- maintainability/readability only when impactful",
     "Security checklist:",
+    "- XSS priority: if input sources (req.body, req.query, req.params, env, headers, pathname, search params) flow into HTML sinks (innerHTML, dangerouslySetInnerHTML, document.write, template HTML assembly), classify as high priority and always suggest safe fixes.",
     "- authz/authn bypass, IDOR, privilege escalation",
     "- injection (SQL/command/template), XSS, CSRF, SSRF",
     "- path traversal, unsafe file handling, open redirect",
@@ -44,14 +47,14 @@ function buildSystemPrompt(): string {
     "- unsafe eval/shell usage and missing input validation",
     "Avoid style-only suggestions unless they materially improve quality.",
     "Return strict JSON:",
-    '{"suggestions":[{"path":"string","line":123,"body":"optional title\\n```suggestion\\n...\\n```"}],"overallStatus":"ok|uncertain","allowAutoApprove":false,"overallComment":"string"}',
+    '{"suggestions":[{"path":"string","line":123,"body":"optional title\n```suggestion\n...\n```"}],"overallStatus":"ok|uncertain","allowAutoApprove":false,"overallComment":"string"}',
     "overallStatus is required.",
     "Set overallStatus='ok' only when you are highly confident there are no actionable issues in changed lines.",
     "Set allowAutoApprove=true only when overallStatus='ok' and suggestions is empty.",
     "If suggestions is not empty, overallComment must be a short, concrete summary.",
     "If suggestions is empty and you are highly confident no actionable issue exists in changed lines, set overallComment exactly to:",
-    `"${REVIEW_OK_COMMENT}"`,
-    "If confidence is not high, do not use REVIEW_OK.",
+    `${REVIEW_OK_COMMENT}`,
+    "If any security risk is detected or uncertain, set overallStatus='uncertain' and never use REVIEW_OK.",
     "body must contain a GitHub suggestion code block.",
   ].join("\n");
 }
@@ -371,6 +374,20 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
             return input.virtualIdeTools.call("search_text", { query, max_results });
           },
         }),
+        read_guidelines: tool({
+          description: "Read repository guidelines to apply project-specific review policy (security, style, and review rules).",
+          inputSchema: z.object({}),
+          execute: async () => {
+            return input.virtualIdeTools.call("read_guidelines", {});
+          },
+        }),
+        scan_security_sinks: tool({
+          description: "Scan changed files for common security sinks (XSS, command injection, path traversal).",
+          inputSchema: z.object({}),
+          execute: async () => {
+            return input.virtualIdeTools.call("scan_security_sinks", {});
+          },
+        }),
         preview_suggestion: tool({
           description: "Preview how a suggestion would look when applied to a file line for safety checks.",
           inputSchema: z.object({
@@ -388,12 +405,26 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
           },
         }),
       },
-      stopWhen: stepCountIs(20),
+      stopWhen: stepCountIs(28),
       prepareStep: ({ stepNumber }) => {
         if (stepNumber === 0) {
           return {
             toolChoice: { type: "tool", toolName: "list_dir" },
             activeTools: ["list_dir"],
+          };
+        }
+
+        if (stepNumber === 1) {
+          return {
+            toolChoice: { type: "tool", toolName: "read_guidelines" },
+            activeTools: ["read_guidelines"],
+          };
+        }
+
+        if (stepNumber === 2) {
+          return {
+            toolChoice: { type: "tool", toolName: "scan_security_sinks" },
+            activeTools: ["scan_security_sinks"],
           };
         }
 
@@ -420,7 +451,12 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
 
       const seen = new Set<string>();
       const validatedSuggestions: SuggestionCandidate[] = [];
+      const MAX_PREVIEW_CHECKS = 12;
+      let previewChecks = 0;
       for (const suggestion of normalized.suggestions) {
+        if (previewChecks >= MAX_PREVIEW_CHECKS) {
+          break;
+        }
         const key = `${suggestion.path}:${suggestion.line}`;
         if (seen.has(key)) {
           continue;
@@ -433,6 +469,7 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
           suggestionBody: suggestion.body,
           virtualIdeTools: input.virtualIdeTools,
         });
+        previewChecks += 1;
         if (preview.isSafe) {
           validatedSuggestions.push(suggestion);
           continue;
