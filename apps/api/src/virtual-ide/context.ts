@@ -75,7 +75,7 @@ export class VirtualIdeTools {
   private readonly changedFileSet: Set<string>;
   private readonly budgets: ToolBudgets = {
     listDir: 3,
-    readFile: 8,
+    readFile: 20,
     searchText: 5,
     readGuideline: 2,
     securityScan: 2,
@@ -125,6 +125,9 @@ export class VirtualIdeTools {
       }
       case "read_guidelines": {
         return this.readGuidelineDocs();
+      }
+      case "scan_security_sinks": {
+        return this.scanSecuritySinks();
       }
       default:
         throw new Error(`Unknown tool: ${toolName}`);
@@ -235,8 +238,8 @@ export class VirtualIdeTools {
       throw new Error("Access denied.");
     }
 
-    if (this.totalReadLines + requestedLineCount > 2000) {
-      throw new Error("read_file total line budget exceeded (2000 lines per PR).");
+    if (this.totalReadLines + requestedLineCount > 5000) {
+      throw new Error("read_file total line budget exceeded (5000 lines per PR).");
     }
 
     const absolutePath = this.resolveRepoPath(relativePath);
@@ -268,7 +271,7 @@ export class VirtualIdeTools {
     this.ensureBudget("securityScan");
 
     const patterns: Array<{ category: string; re: RegExp }> = [
-      { category: "xss", re: /innerHTML\s*=|dangerouslySetInnerHTML|document\.write\s*\(|onerror|onload|srcdoc/ },
+      { category: "xss", re: /innerHTML\s*=|dangerouslySetInnerHTML|document\.write\s*\(|\bonerror\b|\bonload\b|\bsrcdoc\b/ },
       { category: "injection", re: /eval\s*\(|new Function\s*\(|setTimeout\s*\(|setInterval\s*\(/ },
       { category: "cmd-injection", re: /child_process\.|exec\(|spawn\(|execSync\(|spawnSync\(/ },
       { category: "path-traversal", re: /\/\.\.|path\.join\(|path\.resolve\(.*req\.|req\.files|req\.params|req\.body|req\.query/ },

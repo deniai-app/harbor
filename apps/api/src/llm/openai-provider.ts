@@ -451,7 +451,12 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
 
       const seen = new Set<string>();
       const validatedSuggestions: SuggestionCandidate[] = [];
+      const MAX_PREVIEW_CHECKS = 12;
+      let previewChecks = 0;
       for (const suggestion of normalized.suggestions) {
+        if (previewChecks >= MAX_PREVIEW_CHECKS) {
+          break;
+        }
         const key = `${suggestion.path}:${suggestion.line}`;
         if (seen.has(key)) {
           continue;
@@ -464,6 +469,7 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
           suggestionBody: suggestion.body,
           virtualIdeTools: input.virtualIdeTools,
         });
+        previewChecks += 1;
         if (preview.isSafe) {
           validatedSuggestions.push(suggestion);
           continue;
