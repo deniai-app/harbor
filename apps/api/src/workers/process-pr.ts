@@ -15,6 +15,7 @@ import {
 } from "../github/client";
 import type { GitHubInstallationAuth } from "../github/auth";
 import { REVIEW_OK_COMMENT, type ReviewLlmProvider } from "../llm/types";
+import type { ReviewProfile } from "../config/env";
 import { VirtualIdeTools } from "../virtual-ide/context";
 
 interface PullRequestWebhookPayload {
@@ -117,6 +118,7 @@ interface ReviewRequestInput {
 interface ProcessPullRequestEventDeps {
   auth: GitHubInstallationAuth;
   llmProvider: ReviewLlmProvider | null;
+  reviewProfile: ReviewProfile;
   allowConfigRead: boolean;
   triggerMention: string;
 }
@@ -704,6 +706,7 @@ async function runReviewForPullRequest(
       rootDir: workdirSession.workdir,
       changedFiles: mergedFiles,
       allowConfigRead: deps.allowConfigRead,
+      reviewProfile: deps.reviewProfile,
     });
 
     const llmResult = await deps.llmProvider.generateSuggestions({
@@ -713,6 +716,7 @@ async function runReviewForPullRequest(
       headSha,
       changedFiles: mergedFiles,
       virtualIdeTools,
+      reviewProfile: deps.reviewProfile,
     });
     console.info(
       `[review] LLM produced ${llmResult.suggestions.length} suggestion candidates for ${params.owner}/${params.repo}#${params.pullNumber}`,

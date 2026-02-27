@@ -17,10 +17,15 @@ async function bootstrap() {
   const auth = new GitHubInstallationAuth(config.github.appId, config.github.privateKey);
 
   let llmProvider = null;
+  const reviewModel =
+    config.llm.modelByProfile?.[config.reviewProfile] ??
+    config.llm.model ??
+    "gpt-5.3-codex";
+
   try {
     llmProvider = createLlmProvider({
       provider: config.llm.provider,
-      model: config.llm.model,
+      model: reviewModel,
       openaiApiKey: config.llm.openaiApiKey,
     });
   } catch (error) {
@@ -71,6 +76,7 @@ async function bootstrap() {
     const deps = {
       auth,
       llmProvider,
+      reviewProfile: config.reviewProfile,
       allowConfigRead: config.virtualIde.allowConfigRead,
       triggerMention: config.github.reviewTriggerMention,
     };

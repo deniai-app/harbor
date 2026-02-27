@@ -1,4 +1,5 @@
 import type { GitHubPullRequestFile, SuggestionResult } from "@workspace/shared";
+import type { ReviewProfile } from "../config/env";
 import type { VirtualIdeTools } from "../virtual-ide/context";
 
 export type ReviewOverallStatus = "ok" | "uncertain";
@@ -7,6 +8,7 @@ export const REVIEW_OK_COMMENT = "No actionable issues found in changed file(s).
 export type ReviewSuggestionResult = SuggestionResult & {
   overallStatus?: ReviewOverallStatus;
   allowAutoApprove?: boolean;
+  reviewProfileUsed?: ReviewProfile;
 };
 
 export interface GenerateSuggestionInput {
@@ -16,6 +18,7 @@ export interface GenerateSuggestionInput {
   headSha: string;
   changedFiles: GitHubPullRequestFile[];
   virtualIdeTools: VirtualIdeTools;
+  reviewProfile: ReviewProfile;
 }
 
 export interface GenerateReviewingCommentInput {

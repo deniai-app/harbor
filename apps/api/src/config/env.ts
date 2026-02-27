@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 
+export type ReviewProfile = "low" | "default" | "high";
+
 export interface AppConfig {
   port: number;
   baseUrl: string;
@@ -9,9 +11,15 @@ export interface AppConfig {
     webhookSecret: string;
     reviewTriggerMention: string;
   };
+  reviewProfile: ReviewProfile;
   llm: {
     provider: string;
     model: string;
+    modelByProfile: {
+      low: string;
+      default: string;
+      high: string;
+    };
     openaiApiKey?: string;
   };
   virtualIde: {
@@ -27,6 +35,19 @@ function requireEnv(name: string): string {
     throw new Error(`Missing required env var: ${name}`);
   }
   return value;
+}
+
+function parseReviewProfile(value: string | undefined): ReviewProfile {
+  if (value === undefined) {
+    return "default";
+  }
+
+  const normalized = value.toLowerCase();
+  if (normalized === "low" || normalized === "default" || normalized === "high") {
+    return normalized;
+  }
+
+  return "default";
 }
 
 function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
@@ -65,9 +86,15 @@ export async function loadConfigFromEnv(): Promise<AppConfig> {
     },
     llm: {
       provider: process.env.LLM_PROVIDER ?? "openai",
-      model: process.env.LLM_MODEL ?? "gpt-5.2-codex",
+      model: process.env.LLM_MODEL ?? (process.env.LLM_MODEL_LOW ?? process.env.LLM_MODEL_DEFAULT ?? "gpt-5.2-codex"),
+      modelByProfile: {
+        low: process.env.LLM_MODEL_LOW ?? process.env.LLM_MODEL ?? "gpt-4.1-mini",
+        default: process.env.LLM_MODEL_DEFAULT ?? process.env.LLM_MODEL ?? "gpt-5.2-codex",
+        high: process.env.LLM_MODEL_HIGH ?? "gpt-5.3-codex",
+      },
       openaiApiKey: process.env.OPENAI_API_KEY,
     },
+    reviewProfile: parseReviewProfile(process.env.REVIEW_PROFILE),
     virtualIde: {
       allowConfigRead: parseBoolean(process.env.VIRTUAL_IDE_ALLOW_CONFIG_READ, false),
     },

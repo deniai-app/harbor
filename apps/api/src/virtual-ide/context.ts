@@ -1,6 +1,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { basename, join, resolve, sep } from "node:path";
 import type { GitHubPullRequestFile } from "@workspace/shared";
+import type { ReviewProfile } from "../config/env";
 
 const EXCLUDED_DIRS = new Set([
   ".git",
@@ -57,12 +58,16 @@ interface ToolBudgets {
   searchText: number;
   readGuideline: number;
   securityScan: number;
+  maxReadLinesPerCall: number;
+  maxTotalReadLines: number;
 }
+
 
 export interface VirtualIdeOptions {
   rootDir: string;
   changedFiles: GitHubPullRequestFile[];
   allowConfigRead: boolean;
+  reviewProfile?: ReviewProfile;
 }
 
 interface SearchHit {
@@ -71,21 +76,53 @@ interface SearchHit {
   excerpt: string;
 }
 
-export class VirtualIdeTools {
-  private readonly changedFileSet: Set<string>;
-  private readonly budgets: ToolBudgets = {
+export function buildProfileLimits(profile: ReviewProfile): ToolBudgets {
+  if (profile === "low") {
+    return {
+      listDir: 2,
+      readFile: 12,
+      searchText: 2,
+      readGuideline: 1,
+      securityScan: 1,
+      maxReadLinesPerCall: 180,
+      maxTotalReadLines: 1500,
+    };
+  }
+
+  if (profile === "high") {
+    return {
+      listDir: 6,
+      readFile: 80,
+      searchText: 20,
+      readGuideline: 6,
+      securityScan: 8,
+      maxReadLinesPerCall: 400,
+      maxTotalReadLines: 12000,
+    };
+  }
+
+  return {
     listDir: 3,
     readFile: 20,
     searchText: 5,
     readGuideline: 2,
     securityScan: 2,
+    maxReadLinesPerCall: 200,
+    maxTotalReadLines: 5000,
   };
+}
+
+export class VirtualIdeTools {
+  private readonly changedFileSet: Set<string>;
+  private readonly budgets: ToolBudgets;
 
   private totalReadLines = 0;
   private totalCalls = 0;
 
   constructor(private readonly options: VirtualIdeOptions) {
     this.changedFileSet = new Set(options.changedFiles.map((file) => file.filename));
+    const profile: ReviewProfile = options.reviewProfile ?? "default";
+    this.budgets = buildProfileLimits(profile);
   }
 
   async call(toolName: string, rawArgs: unknown): Promise<unknown> {
@@ -225,8 +262,8 @@ export class VirtualIdeTools {
     }
 
     const requestedLineCount = endLine - startLine + 1;
-    if (requestedLineCount > 200) {
-      throw new Error("read_file can read at most 200 lines per call.");
+    if (requestedLineCount > this.budgets.maxReadLinesPerCall) {
+      throw new Error(`read_file can read at most ${this.budgets.maxReadLinesPerCall} lines per call.`);
     }
 
     const relativePath = normalizeRepoRelativePath(path);
@@ -238,8 +275,8 @@ export class VirtualIdeTools {
       throw new Error("Access denied.");
     }
 
-    if (this.totalReadLines + requestedLineCount > 5000) {
-      throw new Error("read_file total line budget exceeded (5000 lines per PR).");
+    if (this.totalReadLines + requestedLineCount > this.budgets.maxTotalReadLines) {
+      throw new Error(`read_file total line budget exceeded (${this.budgets.maxTotalReadLines} lines per PR).`);
     }
 
     const absolutePath = this.resolveRepoPath(relativePath);
