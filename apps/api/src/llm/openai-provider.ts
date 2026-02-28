@@ -45,6 +45,7 @@ function buildSystemPrompt(): string {
     "- secrets exposure, weak crypto/randomness, token/session flaws",
     "- deserialization/prototype pollution/ReDoS/race conditions",
     "- unsafe eval/shell usage and missing input validation",
+    "- `scan_security_sinks` is heuristic: trust high/medium confidence findings as hints, and re-verify with read_file/search_text before suggesting. Low-confidence hits should be treated as optional only.",
     "Avoid style-only suggestions unless they materially improve quality.",
     "Return strict JSON:",
     '{"suggestions":[{"path":"string","line":123,"body":"optional title\n```suggestion\n...\n```"}],"overallStatus":"ok|uncertain","allowAutoApprove":false,"overallComment":"string"}',
@@ -383,7 +384,8 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
           },
         }),
         scan_security_sinks: tool({
-          description: "Scan changed files for common security sinks (XSS, command injection, path traversal).",
+          description:
+            "Scan changed files for common security sink patterns and include per-hit confidence and sourceHint when available.",
           inputSchema: z.object({}),
           execute: async () => {
             return input.virtualIdeTools.call("scan_security_sinks", {});
