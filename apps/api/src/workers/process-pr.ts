@@ -8,10 +8,13 @@ import {
   createPullRequestReview,
   createPullRequestReviewCommentReaction,
   createCheckRun,
+  dismissPullRequestReview,
+  getAuthenticatedLogin,
   updateCheckRun,
   getPullRequestDiff,
   getPullRequestFiles,
   getPullRequestHead,
+  listPullRequestReviews,
   listIssueComments,
   mapCommitStatusState,
   updateIssueComment,
@@ -129,6 +132,72 @@ interface ReviewRunOutcome {
   status: "posted" | "approved" | "no_suggestions" | "skipped_no_llm";
   inlineCommentCount: number;
   hasSummaryBody: boolean;
+}
+
+async function dismissExistingBotApprovals(params: {
+  token: string;
+  owner: string;
+  repo: string;
+  pullNumber: number;
+}): Promise<void> {
+  try {
+    const login = await getAuthenticatedLogin({
+      token: params.token,
+    });
+    const normalizedLogin = login.toLowerCase();
+    console.info(
+      `[review] Checking existing approvals by ${login} for ${params.owner}/${params.repo}#${params.pullNumber}`,
+    );
+
+    const reviews = await listPullRequestReviews({
+      token: params.token,
+      owner: params.owner,
+      repo: params.repo,
+      pullNumber: params.pullNumber,
+    });
+
+    const approvals = reviews.filter(
+      (review) =>
+        review.state === "APPROVED" && review.user?.login?.toLowerCase() === normalizedLogin,
+    );
+
+    if (approvals.length === 0) {
+      console.info(
+        `[review] No prior approvals to dismiss for ${params.owner}/${params.repo}#${params.pullNumber}`,
+      );
+      return;
+    }
+
+    console.info(
+      `[review] Dismissing ${approvals.length} prior approval(s) for ${params.owner}/${params.repo}#${params.pullNumber}`,
+    );
+
+    for (const approval of approvals) {
+      try {
+        await dismissPullRequestReview({
+          token: params.token,
+          owner: params.owner,
+          repo: params.repo,
+          pullNumber: params.pullNumber,
+          reviewId: approval.id,
+          message: "Superseded by a new Harbor rerun.",
+        });
+        console.info(
+          `[review] Dismissed prior approval review_id=${approval.id} for ${params.owner}/${params.repo}#${params.pullNumber}`,
+        );
+      } catch (error) {
+        console.warn(
+          `[review] Failed to dismiss prior approval review_id=${approval.id} for ${params.owner}/${params.repo}#${params.pullNumber}`,
+          error,
+        );
+      }
+    }
+  } catch (error) {
+    console.warn(
+      `[review] Failed while checking existing approvals for ${params.owner}/${params.repo}#${params.pullNumber}`,
+      error,
+    );
+  }
 }
 
 function isTargetAction(
@@ -946,6 +1015,13 @@ async function runReviewForPullRequest(
       (explicitReviewOk || explicitApprovalKey);
 
     if (canApprove) {
+      await dismissExistingBotApprovals({
+        token,
+        owner: params.owner,
+        repo: params.repo,
+        pullNumber: params.pullNumber,
+      });
+
       await createPullRequestReview({
         token,
         owner: params.owner,
@@ -988,6 +1064,13 @@ async function runReviewForPullRequest(
       };
       return outcome;
     }
+
+    await dismissExistingBotApprovals({
+      token,
+      owner: params.owner,
+      repo: params.repo,
+      pullNumber: params.pullNumber,
+    });
 
     await createPullRequestReview({
       token,

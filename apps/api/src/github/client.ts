@@ -142,6 +142,18 @@ export interface IssueComment {
   body: string;
 }
 
+export interface AuthenticatedUser {
+  login: string;
+}
+
+export interface PullRequestReview {
+  id: number;
+  state: string;
+  user: {
+    login?: string;
+  } | null;
+}
+
 export async function listIssueComments(params: {
   token: string;
   owner: string;
@@ -165,6 +177,62 @@ export async function listIssueComments(params: {
       body: comment.body ?? "",
     }))
     .filter((comment) => Number.isInteger(comment.id) && comment.id > 0);
+}
+
+export async function getAuthenticatedLogin(params: { token: string }): Promise<string> {
+  const octokit = buildClient(params.token);
+
+  const data = await handleApiResponse(async () => octokit.rest.users.getAuthenticated());
+  const login = (data as AuthenticatedUser).login;
+
+  if (typeof login !== "string" || login.trim().length === 0) {
+    throw new Error("Failed to get authenticated GitHub login.");
+  }
+
+  return login;
+}
+
+export async function listPullRequestReviews(params: {
+  token: string;
+  owner: string;
+  repo: string;
+  pullNumber: number;
+}): Promise<PullRequestReview[]> {
+  const octokit = buildClient(params.token);
+
+  const reviews = await octokit.paginate(octokit.rest.pulls.listReviews, {
+    owner: params.owner,
+    repo: params.repo,
+    pull_number: params.pullNumber,
+    per_page: 100,
+  });
+
+  return reviews.map((review) => ({
+    id: review.id,
+    state: review.state,
+    user: review.user ? { login: review.user.login } : null,
+  }));
+}
+
+export async function dismissPullRequestReview(params: {
+  token: string;
+  owner: string;
+  repo: string;
+  pullNumber: number;
+  reviewId: number;
+  message: string;
+}): Promise<void> {
+  const octokit = buildClient(params.token);
+
+  await handleApiResponse(async () =>
+    octokit.rest.pulls.dismissReview({
+      owner: params.owner,
+      repo: params.repo,
+      pull_number: params.pullNumber,
+      review_id: params.reviewId,
+      message: params.message,
+    }),
+  );
 }
 
 export async function updateIssueComment(params: {
