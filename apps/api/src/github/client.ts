@@ -189,7 +189,7 @@ export async function getAuthenticatedLogin(params: { token: string }): Promise<
     throw new Error("Failed to get authenticated GitHub login.");
   }
 
-  return login;
+  return login.trim();
 }
 
 export async function listPullRequestReviews(params: {
@@ -207,11 +207,15 @@ export async function listPullRequestReviews(params: {
     per_page: 100,
   });
 
-  return reviews.map((review) => ({
-    id: review.id,
-    state: review.state,
-    user: review.user ? { login: review.user.login } : null,
-  }));
+  return reviews
+    .map((review) => ({
+      id: review.id,
+      state: review.state,
+      user: review.user ? { login: review.user.login } : null,
+    }))
+    .filter(
+      (review) => Number.isInteger(review.id) && review.id > 0 && typeof review.state === "string",
+    );
 }
 
 export async function dismissPullRequestReview(params: {

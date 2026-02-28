@@ -144,7 +144,7 @@ async function dismissExistingBotApprovals(params: {
     const login = await getAuthenticatedLogin({
       token: params.token,
     });
-    const normalizedLogin = login.toLowerCase();
+    const normalizedLogin = login.trim().toLowerCase();
     console.info(
       `[review] Checking existing approvals by ${login} for ${params.owner}/${params.repo}#${params.pullNumber}`,
     );
