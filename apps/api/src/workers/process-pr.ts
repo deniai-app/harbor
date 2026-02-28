@@ -129,8 +129,15 @@ interface ReviewRunOutcome {
   hasSummaryBody: boolean;
 }
 
-function isTargetAction(action: string): action is "opened" | "synchronize" {
-  return action === "opened" || action === "synchronize";
+function isTargetAction(
+  action: string,
+): action is "opened" | "ready_for_review" | "reopened" | "synchronize" {
+  return (
+    action === "opened" ||
+    action === "ready_for_review" ||
+    action === "reopened" ||
+    action === "synchronize"
+  );
 }
 
 function isCommentCreatedAction(action: string): action is "created" {
@@ -312,8 +319,7 @@ async function notifyMentionTriggered(params: {
   pullNumber: number;
   source: "issue_comment" | "pull_request" | "pull_request_review_comment" | "pull_request_review";
   commentId: number;
-  llmProvider: ReviewLlmProvider | null;
-}): Promise<number | undefined> {
+}): Promise<void> {
   try {
     if (params.source === "issue_comment") {
       await createIssueCommentReaction({
@@ -343,24 +349,9 @@ async function notifyMentionTriggered(params: {
   } catch (error) {
     console.warn("[mention-trigger] Failed to add eyes reaction", error);
   }
-
-  const reviewingBody = await buildReviewingComment({
-    owner: params.owner,
-    repo: params.repo,
-    pullNumber: params.pullNumber,
-    source: params.source,
-    llmProvider: params.llmProvider,
-  });
-
-  return upsertReviewingComment({
-    token: params.token,
-    owner: params.owner,
-    repo: params.repo,
-    pullNumber: params.pullNumber,
-    reviewingBody,
-    context: "mention-trigger",
-  });
 }
+
+const REVIEWING_COMMENT_SOURCE = "pull_request" as const;
 
 async function buildReviewingComment(params: {
   owner: string;
@@ -388,7 +379,7 @@ async function buildReviewingComment(params: {
       }
     } catch (error) {
       console.warn(
-        "[mention-trigger] Failed to generate AI reviewing comment. Falling back to template.",
+        "[review] Failed to generate AI reviewing comment. Falling back to template.",
         error,
       );
     }
@@ -553,6 +544,92 @@ function mapReviewOutcomeToConclusion(params: {
   }
 
   return "neutral";
+}
+
+async function startReviewProgressComment(params: {
+  token: string;
+  owner: string;
+  repo: string;
+  pullNumber: number;
+  llmProvider: ReviewLlmProvider | null;
+  context: "pull_request" | "mention-trigger";
+}): Promise<number | undefined> {
+  try {
+    const reviewingBody = await buildReviewingComment({
+      owner: params.owner,
+      repo: params.repo,
+      pullNumber: params.pullNumber,
+      source: REVIEWING_COMMENT_SOURCE,
+      llmProvider: params.llmProvider,
+    });
+
+    return await upsertReviewingComment({
+      token: params.token,
+      owner: params.owner,
+      repo: params.repo,
+      pullNumber: params.pullNumber,
+      reviewingBody,
+      context: params.context,
+    });
+  } catch (error) {
+    console.warn(`[${params.context}] Failed to post reviewing comment`, error);
+    return undefined;
+  }
+}
+
+async function runReviewWithProgressTracking(
+  params: ReviewRequestInput & {
+    token: string;
+    context: "pull_request" | "mention-trigger";
+  },
+  deps: ProcessPullRequestEventDeps,
+): Promise<void> {
+  const startedAt = Date.now();
+  const progressCommentId = await startReviewProgressComment({
+    token: params.token,
+    owner: params.owner,
+    repo: params.repo,
+    pullNumber: params.pullNumber,
+    llmProvider: deps.llmProvider,
+    context: params.context,
+  });
+
+  let outcome: ReviewRunOutcome | undefined;
+  let reviewError: unknown;
+  try {
+    outcome = await runReviewForPullRequest(params, deps);
+  } catch (error) {
+    reviewError = error;
+  }
+
+  if (progressCommentId) {
+    try {
+      await updateIssueComment({
+        token: params.token,
+        owner: params.owner,
+        repo: params.repo,
+        commentId: progressCommentId,
+        body: buildCompletedReviewingComment({
+          owner: params.owner,
+          repo: params.repo,
+          pullNumber: params.pullNumber,
+          startedAt,
+          finishedAt: Date.now(),
+          outcome,
+          error: reviewError,
+        }),
+      });
+      console.info(
+        `[${params.context}] Finalized reviewing comment ${progressCommentId} on ${params.owner}/${params.repo}#${params.pullNumber}`,
+      );
+    } catch (error) {
+      console.warn(`[${params.context}] Failed to finalize reviewing comment`, error);
+    }
+  }
+
+  if (reviewError) {
+    throw reviewError;
+  }
 }
 
 function normalizePath(path: string): string {
@@ -958,82 +1035,25 @@ export async function processPullRequestEvent(
   const owner = payload.repository.owner.login;
   const repo = payload.repository.name;
   const pullNumber = payload.pull_request.number;
-  const startedAt = Date.now();
 
   console.info(
     `[pull_request] Trigger review for ${owner}/${repo}#${pullNumber} action=${payload.action}`,
   );
 
   const token = await deps.auth.getInstallationToken(installationId);
-
-  let progressCommentId: number | undefined;
-  try {
-    const reviewingBody = await buildReviewingComment({
+  await runReviewWithProgressTracking(
+    {
+      installationId,
       owner,
       repo,
       pullNumber,
-      source: "pull_request",
-      llmProvider: deps.llmProvider,
-    });
-    progressCommentId = await upsertReviewingComment({
+      headSha: payload.pull_request.head.sha,
+      cloneUrl: payload.repository.clone_url,
       token,
-      owner,
-      repo,
-      pullNumber,
-      reviewingBody,
       context: "pull_request",
-    });
-  } catch (error) {
-    console.warn("[pull_request] Failed to post reviewing comment", error);
-  }
-
-  let outcome: ReviewRunOutcome | undefined;
-  let reviewError: unknown;
-  try {
-    outcome = await runReviewForPullRequest(
-      {
-        installationId,
-        owner,
-        repo,
-        pullNumber,
-        headSha: payload.pull_request.head.sha,
-        cloneUrl: payload.repository.clone_url,
-        token,
-      },
-      deps,
-    );
-  } catch (error) {
-    reviewError = error;
-  }
-
-  if (progressCommentId) {
-    try {
-      await updateIssueComment({
-        token,
-        owner,
-        repo,
-        commentId: progressCommentId,
-        body: buildCompletedReviewingComment({
-          owner,
-          repo,
-          pullNumber,
-          startedAt,
-          finishedAt: Date.now(),
-          outcome,
-          error: reviewError,
-        }),
-      });
-      console.info(
-        `[pull_request] Finalized reviewing comment ${progressCommentId} on ${owner}/${repo}#${pullNumber}`,
-      );
-    } catch (error) {
-      console.warn("[pull_request] Failed to finalize reviewing comment", error);
-    }
-  }
-
-  if (reviewError) {
-    throw reviewError;
-  }
+    },
+    deps,
+  );
 }
 
 export async function processIssueCommentEvent(
@@ -1074,69 +1094,33 @@ export async function processIssueCommentEvent(
   const owner = payload.repository.owner.login;
   const repo = payload.repository.name;
   const pullNumber = payload.issue.number;
-  const startedAt = Date.now();
 
   console.info(
     `[issue_comment] Mention detected. Trigger review for ${owner}/${repo}#${pullNumber}`,
   );
   const token = await deps.auth.getInstallationToken(installationId);
 
-  const progressCommentId = await notifyMentionTriggered({
+  await notifyMentionTriggered({
     token,
     owner,
     repo,
     pullNumber,
     source: "issue_comment",
     commentId: payload.comment.id,
-    llmProvider: deps.llmProvider,
   });
 
-  let outcome: ReviewRunOutcome | undefined;
-  let reviewError: unknown;
-  try {
-    outcome = await runReviewForPullRequest(
-      {
-        installationId,
-        owner,
-        repo,
-        pullNumber,
-        cloneUrl: payload.repository.clone_url,
-        token,
-      },
-      deps,
-    );
-  } catch (error) {
-    reviewError = error;
-  }
-
-  if (progressCommentId) {
-    try {
-      await updateIssueComment({
-        token,
-        owner,
-        repo,
-        commentId: progressCommentId,
-        body: buildCompletedReviewingComment({
-          owner,
-          repo,
-          pullNumber,
-          startedAt,
-          finishedAt: Date.now(),
-          outcome,
-          error: reviewError,
-        }),
-      });
-      console.info(
-        `[mention-trigger] Finalized reviewing comment ${progressCommentId} on ${owner}/${repo}#${pullNumber}`,
-      );
-    } catch (error) {
-      console.warn("[mention-trigger] Failed to finalize reviewing comment", error);
-    }
-  }
-
-  if (reviewError) {
-    throw reviewError;
-  }
+  await runReviewWithProgressTracking(
+    {
+      installationId,
+      owner,
+      repo,
+      pullNumber,
+      cloneUrl: payload.repository.clone_url,
+      token,
+      context: "mention-trigger",
+    },
+    deps,
+  );
 }
 
 export async function processPullRequestReviewEvent(
@@ -1171,69 +1155,33 @@ export async function processPullRequestReviewEvent(
   const owner = payload.repository.owner.login;
   const repo = payload.repository.name;
   const pullNumber = payload.pull_request.number;
-  const startedAt = Date.now();
 
   console.info(
     `[pull_request_review] Mention detected. Trigger review for ${owner}/${repo}#${pullNumber}`,
   );
   const token = await deps.auth.getInstallationToken(installationId);
 
-  const progressCommentId = await notifyMentionTriggered({
+  await notifyMentionTriggered({
     token,
     owner,
     repo,
     pullNumber,
     source: "pull_request_review",
     commentId: payload.review.id,
-    llmProvider: deps.llmProvider,
   });
 
-  let outcome: ReviewRunOutcome | undefined;
-  let reviewError: unknown;
-  try {
-    outcome = await runReviewForPullRequest(
-      {
-        installationId,
-        owner,
-        repo,
-        pullNumber,
-        cloneUrl: payload.repository.clone_url,
-        token,
-      },
-      deps,
-    );
-  } catch (error) {
-    reviewError = error;
-  }
-
-  if (progressCommentId) {
-    try {
-      await updateIssueComment({
-        token,
-        owner,
-        repo,
-        commentId: progressCommentId,
-        body: buildCompletedReviewingComment({
-          owner,
-          repo,
-          pullNumber,
-          startedAt,
-          finishedAt: Date.now(),
-          outcome,
-          error: reviewError,
-        }),
-      });
-      console.info(
-        `[mention-trigger] Finalized reviewing comment ${progressCommentId} on ${owner}/${repo}#${pullNumber}`,
-      );
-    } catch (error) {
-      console.warn("[mention-trigger] Failed to finalize reviewing comment", error);
-    }
-  }
-
-  if (reviewError) {
-    throw reviewError;
-  }
+  await runReviewWithProgressTracking(
+    {
+      installationId,
+      owner,
+      repo,
+      pullNumber,
+      cloneUrl: payload.repository.clone_url,
+      token,
+      context: "mention-trigger",
+    },
+    deps,
+  );
 }
 
 export async function processPullRequestReviewCommentEvent(
@@ -1267,67 +1215,31 @@ export async function processPullRequestReviewCommentEvent(
   const owner = payload.repository.owner.login;
   const repo = payload.repository.name;
   const pullNumber = payload.pull_request.number;
-  const startedAt = Date.now();
 
   console.info(
     `[pull_request_review_comment] Mention detected. Trigger review for ${owner}/${repo}#${pullNumber}`,
   );
   const token = await deps.auth.getInstallationToken(installationId);
 
-  const progressCommentId = await notifyMentionTriggered({
+  await notifyMentionTriggered({
     token,
     owner,
     repo,
     pullNumber,
     source: "pull_request_review_comment",
     commentId: payload.comment.id,
-    llmProvider: deps.llmProvider,
   });
 
-  let outcome: ReviewRunOutcome | undefined;
-  let reviewError: unknown;
-  try {
-    outcome = await runReviewForPullRequest(
-      {
-        installationId,
-        owner,
-        repo,
-        pullNumber,
-        cloneUrl: payload.repository.clone_url,
-        token,
-      },
-      deps,
-    );
-  } catch (error) {
-    reviewError = error;
-  }
-
-  if (progressCommentId) {
-    try {
-      await updateIssueComment({
-        token,
-        owner,
-        repo,
-        commentId: progressCommentId,
-        body: buildCompletedReviewingComment({
-          owner,
-          repo,
-          pullNumber,
-          startedAt,
-          finishedAt: Date.now(),
-          outcome,
-          error: reviewError,
-        }),
-      });
-      console.info(
-        `[mention-trigger] Finalized reviewing comment ${progressCommentId} on ${owner}/${repo}#${pullNumber}`,
-      );
-    } catch (error) {
-      console.warn("[mention-trigger] Failed to finalize reviewing comment", error);
-    }
-  }
-
-  if (reviewError) {
-    throw reviewError;
-  }
+  await runReviewWithProgressTracking(
+    {
+      installationId,
+      owner,
+      repo,
+      pullNumber,
+      cloneUrl: payload.repository.clone_url,
+      token,
+      context: "mention-trigger",
+    },
+    deps,
+  );
 }
