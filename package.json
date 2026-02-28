@@ -1,20 +1,6 @@
 {
   "name": "deni-ai-harbor",
   "version": "0.1.1",
-  "private": true,
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
-  "scripts": {
-    "start": "bun apps/api/src/index.ts",
-    "build": "turbo build",
-    "dev": "turbo dev",
-    "lint": "turbo lint",
-    "lint:fix": "turbo lint -- --fix",
-    "format": "oxfmt .",
-    "format:check": "oxfmt --check ."
-  },
   "devDependencies": {
     "@typescript/native-preview": "^7.0.0-dev.20260223.1",
     "@workspace/typescript-config": "workspace:*",
@@ -25,5 +11,19 @@
   "engines": {
     "node": ">=20"
   },
-  "packageManager": "bun@1.3.9"
+  "packageManager": "bun@1.3.9",
+  "private": true,
+  "scripts": {
+    "start": "bun apps/api/src/index.ts",
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint",
+    "lint:fix": "turbo lint -- --fix",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check ."
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
 }
