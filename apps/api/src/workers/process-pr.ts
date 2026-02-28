@@ -175,9 +175,7 @@ function parseMentionTarget(rawMention: string): MentionTarget | null {
 }
 
 function stripCodeLikeSections(body: string): string {
-  return body
-    .replace(/```[\s\S]*?```/g, "")
-    .replace(/`[^`]*`/g, "");
+  return body.replace(/```[\s\S]*?```/g, "").replace(/`[^`]*`/g, "");
 }
 
 function extractMentionCandidates(body: string): { usernames: Set<string>; userIds: Set<string> } {

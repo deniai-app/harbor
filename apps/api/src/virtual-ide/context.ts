@@ -33,7 +33,10 @@ const USER_INPUT_MARKERS: Array<{ hint: string; re: RegExp }> = [
   { hint: "req.cookies", re: /\breq\.(?:cookies)\b/i },
   { hint: "req.path", re: /\breq\.(?:path|url|originalUrl)\b/i },
   { hint: "ctx", re: /\b(?:ctx|c)\.(?:body|query|params)\b/i },
-  { hint: "search params", re: /\b(?:URLSearchParams|location\.search|window\.location|document\.location)\b/i },
+  {
+    hint: "search params",
+    re: /\b(?:URLSearchParams|location\.search|window\.location|document\.location)\b/i,
+  },
   { hint: "request body/query object", re: /\b(?:body|query|params|cookies)\[[^\]]+\]/i },
 ];
 
@@ -254,8 +257,10 @@ export class VirtualIdeTools {
     const importDefault = /import\s+([A-Za-z_$][\w$]*)\s+from\s+["']child_process["']/g;
     const namespaceImport = /import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+["']child_process["']/g;
     const namedImport = /import\s*\{([^}]+)\}\s*from\s+["']child_process["']/g;
-    const cjsRequireAlias = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\(["']child_process["']\)/g;
-    const cjsRequireDestructure = /(?:const|let|var)\s*\{([^}]+)\}\s*=\s*require\(["']child_process["']\)/g;
+    const cjsRequireAlias =
+      /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\(["']child_process["']\)/g;
+    const cjsRequireDestructure =
+      /(?:const|let|var)\s*\{([^}]+)\}\s*=\s*require\(["']child_process["']\)/g;
 
     for (const rawLine of lines) {
       let match: RegExpExecArray | null;
@@ -359,7 +364,9 @@ export class VirtualIdeTools {
     this.ensureBudget("listDir");
 
     const resolvedDepth = Number.isFinite(depth) ? Math.max(0, Math.min(depth, 24)) : 3;
-    const resolvedMax = Number.isFinite(maxEntries) ? Math.max(1, Math.min(maxEntries, 10000)) : 400;
+    const resolvedMax = Number.isFinite(maxEntries)
+      ? Math.max(1, Math.min(maxEntries, 10000))
+      : 400;
 
     const relative = normalizeRepoRelativePath(path);
     const startDir = this.resolveRepoPath(relative);
