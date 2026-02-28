@@ -1,9 +1,45 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { Button } from "@workspace/ui/components/button";
+import { createPageMetadata, siteConfig } from "@/lib/seo";
+
+export const metadata: Metadata = createPageMetadata({
+  title: "GitHub PR Review Automation",
+  description:
+    "Automate pull request reviews with safe AI suggestions, reduced review churn, and deterministic approval handling.",
+  path: "/",
+});
 
 export default function Page() {
+  const structuredData = {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: siteConfig.name,
+    applicationCategory: "DeveloperApplication",
+    operatingSystem: "Web",
+    description: siteConfig.description,
+    url: siteConfig.url,
+    featureList: [
+      "Automated pull request review feedback",
+      "Suggestion-only review comments",
+      "Deterministic approval handling",
+      "Support for OSS and self-hosted workflows",
+    ],
+    sameAs: ["https://github.com/apps/deni-ai-harbor"],
+    offers: {
+      "@type": "Offer",
+      price: "0",
+      priceCurrency: "USD",
+    },
+  };
+
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-4xl flex-col justify-center px-6 py-16">
+      <script
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+        type="application/ld+json"
+      />
+
       <p className="text-muted-foreground text-sm font-semibold uppercase tracking-tight">
         Deni AI Harbor
       </p>

@@ -1,14 +1,13 @@
 import Link from "next/link";
+import type { Metadata } from "next";
+import { createPageMetadata } from "@/lib/seo";
 
-const envKeys = [
-  "GITHUB_APP_ID",
-  "GITHUB_PRIVATE_KEY_PEM or GITHUB_PRIVATE_KEY_PATH",
-  "GITHUB_WEBHOOK_SECRET",
-  "BASE_URL",
-  "LLM_PROVIDER",
-  "LLM_MODEL",
-  "OPENAI_API_KEY",
-];
+export const metadata: Metadata = createPageMetadata({
+  title: "Setup Guide",
+  description:
+    "Install Deni AI Harbor and configure required environment variables and webhook URL for GitHub App review automation.",
+  path: "/settings",
+});
 
 export default function SettingsPage() {
   return (
@@ -21,7 +20,9 @@ export default function SettingsPage() {
       </div>
 
       <section className="bg-background border-border rounded-2xl border p-6">
-        <h2 className="text-foreground text-lg font-medium tracking-tight">Install Deni AI Harbor</h2>
+        <h2 className="text-foreground text-lg font-medium tracking-tight">
+          Install Deni AI Harbor
+        </h2>
         <ol className="text-muted-foreground mt-4 space-y-2 text-sm tracking-tight">
           <li>1. Open the Deni AI Harbor GitHub App installation page.</li>
           <li>2. Choose your organization or repository access scope.</li>
@@ -36,31 +37,6 @@ export default function SettingsPage() {
           >
             Install Deni AI Harbor on GitHub
           </a>
-        </p>
-      </section>
-
-      <section className="bg-background border-border mt-6 rounded-2xl border p-6">
-        <h2 className="text-foreground text-lg font-medium tracking-tight">
-          Required environment variables
-        </h2>
-        <ul className="mt-4 space-y-2 tracking-tight">
-          {envKeys.map((key) => (
-            <li
-              className="bg-muted text-muted-foreground rounded-md px-3 py-2 font-mono text-sm tracking-tight"
-              key={key}
-            >
-              {key}
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="bg-background border-border mt-6 rounded-2xl border p-6">
-        <h2 className="text-foreground text-lg font-medium tracking-tight">Webhook URL</h2>
-        <p className="text-muted-foreground mt-3 text-sm tracking-tight">
-          <code className="bg-muted rounded px-1 py-0.5 tracking-tight">
-            {`POST {BASE_URL}/webhooks/github`}
-          </code>
         </p>
       </section>
     </main>
