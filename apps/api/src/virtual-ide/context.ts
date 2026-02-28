@@ -1,5 +1,5 @@
 import { readFile, readdir, stat } from "node:fs/promises";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, extname, join, resolve, sep } from "node:path";
 import type { GitHubPullRequestFile } from "@workspace/shared";
 
 const EXCLUDED_DIRS = new Set([
@@ -22,6 +22,63 @@ const DEFAULT_CONFIG_ALLOWLIST = new Set([
   ".eslintrc.js",
   ".oxlintrc.json",
 ]);
+
+const SECURITY_SCAN_EXTENSIONS = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"]);
+
+const USER_INPUT_MARKERS: Array<{ hint: string; re: RegExp }> = [
+  { hint: "req.body", re: /\breq\.(?:body|rawBody)\b/i },
+  { hint: "req.query", re: /\breq\.(?:query)\b/i },
+  { hint: "req.params", re: /\breq\.(?:params)\b/i },
+  { hint: "req.headers", re: /\breq\.(?:headers|header)\b/i },
+  { hint: "req.cookies", re: /\breq\.(?:cookies)\b/i },
+  { hint: "req.path", re: /\breq\.(?:path|url|originalUrl)\b/i },
+  { hint: "ctx", re: /\b(?:ctx|c)\.(?:body|query|params)\b/i },
+  { hint: "search params", re: /\b(?:URLSearchParams|location\.search|window\.location|document\.location)\b/i },
+  { hint: "request body/query object", re: /\b(?:body|query|params|cookies)\[[^\]]+\]/i },
+];
+
+const SANITIZER_PATTERNS = [
+  /\bDOMPurify\b/i,
+  /\bsanitize(?:Html|HTML)?\b/i,
+  /\bhtmlEscape\b/i,
+  /\bencodeURIComponent\b/i,
+];
+
+const COMMAND_CALL_METHODS = ["exec", "spawn", "execSync", "spawnSync"] as const;
+
+type SecurityScanConfidence = "low" | "medium" | "high";
+
+type ChildProcessAliasSet = {
+  objectAliases: Set<string>;
+  functionAliases: Set<string>;
+};
+
+interface ToolBudgets {
+  listDir: number;
+  readFile: number;
+  searchText: number;
+  readGuideline: number;
+  securityScan: number;
+}
+
+interface SearchHit {
+  path: string;
+  line: number;
+  excerpt: string;
+}
+
+interface SecuritySinkFinding {
+  path: string;
+  line: number;
+  category: string;
+  excerpt: string;
+  confidence: SecurityScanConfidence;
+  sourceHint?: string;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function isHiddenSecretFile(fileName: string): boolean {
   const lower = fileName.toLowerCase();
@@ -51,12 +108,11 @@ function normalizeRepoRelativePath(inputPath: string): string {
   return segments.filter(Boolean).join("/");
 }
 
-interface ToolBudgets {
-  listDir: number;
-  readFile: number;
-  searchText: number;
-  readGuideline: number;
-  securityScan: number;
+function stripScanNoise(raw: string): string {
+  return raw
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/, "")
+    .trim();
 }
 
 export interface VirtualIdeOptions {
@@ -65,23 +121,16 @@ export interface VirtualIdeOptions {
   allowConfigRead: boolean;
 }
 
-interface SearchHit {
-  path: string;
-  line: number;
-  excerpt: string;
-}
-
 export class VirtualIdeTools {
   private readonly changedFileSet: Set<string>;
   private readonly budgets: ToolBudgets = {
-    listDir: 3,
-    readFile: 20,
-    searchText: 5,
-    readGuideline: 2,
-    securityScan: 2,
+    listDir: 200,
+    readFile: 2000,
+    searchText: 200,
+    readGuideline: 20,
+    securityScan: 50,
   };
 
-  private totalReadLines = 0;
   private totalCalls = 0;
 
   constructor(private readonly options: VirtualIdeOptions) {
@@ -168,11 +217,149 @@ export class VirtualIdeTools {
     return DEFAULT_CONFIG_ALLOWLIST.has(basename(path));
   }
 
+  private isScannableFile(path: string): boolean {
+    const extension = extname(path).toLowerCase();
+    return SECURITY_SCAN_EXTENSIONS.has(extension);
+  }
+
+  private hasUserInputSource(line: string): boolean {
+    return USER_INPUT_MARKERS.some(({ re }) => re.test(line));
+  }
+
+  private extractUserInputHint(line: string): string | undefined {
+    for (const { hint, re } of USER_INPUT_MARKERS) {
+      if (re.test(line)) {
+        return hint;
+      }
+    }
+    return undefined;
+  }
+
+  private inferConfidence(line: string): SecurityScanConfidence {
+    if (this.hasUserInputSource(line)) {
+      return "high";
+    }
+
+    if (SANITIZER_PATTERNS.some((re) => re.test(line))) {
+      return "low";
+    }
+
+    return "medium";
+  }
+
+  private collectChildProcessAliases(lines: string[]): ChildProcessAliasSet {
+    const objectAliases = new Set(["child_process"]);
+    const functionAliases = new Set<string>();
+
+    const importDefault = /import\s+([A-Za-z_$][\w$]*)\s+from\s+["']child_process["']/g;
+    const namespaceImport = /import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+["']child_process["']/g;
+    const namedImport = /import\s*\{([^}]+)\}\s*from\s+["']child_process["']/g;
+    const cjsRequireAlias = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\(["']child_process["']\)/g;
+    const cjsRequireDestructure = /(?:const|let|var)\s*\{([^}]+)\}\s*=\s*require\(["']child_process["']\)/g;
+
+    for (const rawLine of lines) {
+      let match: RegExpExecArray | null;
+
+      while ((match = importDefault.exec(rawLine)) !== null) {
+        const alias = match[1];
+        if (alias) {
+          objectAliases.add(alias);
+        }
+      }
+
+      while ((match = namespaceImport.exec(rawLine)) !== null) {
+        const alias = match[1];
+        if (alias) {
+          objectAliases.add(alias);
+        }
+      }
+
+      while ((match = cjsRequireAlias.exec(rawLine)) !== null) {
+        const alias = match[1];
+        if (alias) {
+          objectAliases.add(alias);
+        }
+      }
+
+      while ((match = namedImport.exec(rawLine)) !== null) {
+        const imports = match[1];
+        if (!imports) {
+          continue;
+        }
+
+        for (const token of imports.split(",")) {
+          const t = token.trim();
+          if (!t) {
+            continue;
+          }
+
+          const asMatch = /([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)/i.exec(t);
+          if (asMatch) {
+            functionAliases.add(asMatch[2] ?? "");
+            continue;
+          }
+
+          functionAliases.add(t.split(/\s+/)[0] ?? "");
+        }
+      }
+
+      while ((match = cjsRequireDestructure.exec(rawLine)) !== null) {
+        const imports = match[1];
+        if (!imports) {
+          continue;
+        }
+
+        for (const token of imports.split(",")) {
+          const t = token.trim();
+          if (!t) {
+            continue;
+          }
+
+          const asMatch = /([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)/i.exec(t);
+          if (asMatch) {
+            functionAliases.add(asMatch[2] ?? "");
+            continue;
+          }
+
+          functionAliases.add(t.split(/\s+/)[0] ?? "");
+        }
+      }
+    }
+
+    return { objectAliases, functionAliases };
+  }
+
+  private hasChildProcessCall(line: string, aliases: ChildProcessAliasSet): boolean {
+    const objectPattern = Array.from(aliases.objectAliases)
+      .map((alias) => escapeRegExp(alias))
+      .join("|");
+
+    if (objectPattern) {
+      const objectAliasRegex = new RegExp(
+        `\\b(?:${objectPattern})\\.(?:${COMMAND_CALL_METHODS.join("|")})\\s*\\(`,
+      );
+      if (objectAliasRegex.test(line)) {
+        return true;
+      }
+    }
+
+    const functionPattern = Array.from(aliases.functionAliases)
+      .map((alias) => escapeRegExp(alias))
+      .join("|");
+
+    if (!functionPattern) {
+      return false;
+    }
+
+    const functionAliasRegex = new RegExp(`\\b(?:${functionPattern})\\s*\\(`);
+    return functionAliasRegex.test(line);
+  }
+
   private async listDir(path: string, depth: number, maxEntries: number): Promise<string[]> {
     this.ensureBudget("listDir");
 
-    const resolvedDepth = Number.isFinite(depth) ? Math.max(0, Math.min(depth, 10)) : 3;
-    const resolvedMax = Number.isFinite(maxEntries) ? Math.max(1, Math.min(maxEntries, 2000)) : 400;
+    const resolvedDepth = Number.isFinite(depth) ? Math.max(0, Math.min(depth, 24)) : 3;
+    const resolvedMax = Number.isFinite(maxEntries) ? Math.max(1, Math.min(maxEntries, 10000)) : 400;
 
     const relative = normalizeRepoRelativePath(path);
     const startDir = this.resolveRepoPath(relative);
@@ -224,11 +411,6 @@ export class VirtualIdeTools {
       throw new Error("end_line must be >= start_line.");
     }
 
-    const requestedLineCount = endLine - startLine + 1;
-    if (requestedLineCount > 200) {
-      throw new Error("read_file can read at most 200 lines per call.");
-    }
-
     const relativePath = normalizeRepoRelativePath(path);
     if (!this.isAllowedReadPath(relativePath)) {
       throw new Error(`read_file is restricted to changed files by default: ${relativePath}`);
@@ -236,10 +418,6 @@ export class VirtualIdeTools {
 
     if (isHiddenSecretFile(basename(relativePath))) {
       throw new Error("Access denied.");
-    }
-
-    if (this.totalReadLines + requestedLineCount > 5000) {
-      throw new Error("read_file total line budget exceeded (5000 lines per PR).");
     }
 
     const absolutePath = this.resolveRepoPath(relativePath);
@@ -254,32 +432,39 @@ export class VirtualIdeTools {
       numberedLines.push(`${i + 1}| ${lines[i] ?? ""}`);
     }
 
-    this.totalReadLines += requestedLineCount;
-
     return numberedLines.join("\n");
   }
 
-  private ensureGuidelineBudget(): void {
-    this.budgets.readGuideline -= 1;
-    if (this.budgets.readGuideline < 0) {
-      throw new Error("Tool budget exceeded for read_guidelines.");
-    }
-  }
-
-
-  private async scanSecuritySinks(): Promise<Array<{ path: string; line: number; category: string; excerpt: string }>> {
+  private async scanSecuritySinks(): Promise<SecuritySinkFinding[]> {
     this.ensureBudget("securityScan");
 
-    const patterns: Array<{ category: string; re: RegExp }> = [
-      { category: "xss", re: /innerHTML\s*=|dangerouslySetInnerHTML|document\.write\s*\(|\bonerror\b|\bonload\b|\bsrcdoc\b/ },
-      { category: "injection", re: /eval\s*\(|new Function\s*\(|setTimeout\s*\(|setInterval\s*\(/ },
-      { category: "cmd-injection", re: /child_process\.|exec\(|spawn\(|execSync\(|spawnSync\(/ },
-      { category: "path-traversal", re: /\/\.\.|path\.join\(|path\.resolve\(.*req\.|req\.files|req\.params|req\.body|req\.query/ },
+    const findings: SecuritySinkFinding[] = [];
+    const seen = new Set<string>();
+
+    const xssPatterns = [
+      /\binnerHTML\s*=/,
+      /\bdangerouslySetInnerHTML\b/,
+      /\bsrcdoc\s*=/,
+      /\bdocument\.write\s*\(/,
     ];
 
-    const findings: Array<{ path: string; line: number; category: string; excerpt: string }> = [];
+    const injectionPatterns = [
+      /\beval\s*\(/,
+      /\bnew\s+Function\s*\(/,
+      /\b(?:setTimeout|setInterval)\s*\(\s*["'`]/,
+    ];
+
+    const pathTraversalPatterns = [
+      /\bpath\.join\s*\(/,
+      /\bpath\.resolve\s*\(/,
+      /\bpath\.normalize\s*\(/,
+    ];
 
     for (const path of this.changedFileSet) {
+      if (!this.isScannableFile(path)) {
+        continue;
+      }
+
       try {
         const absolutePath = this.resolveRepoPath(path);
         const fileStat = await stat(absolutePath);
@@ -289,18 +474,89 @@ export class VirtualIdeTools {
 
         const content = await readFile(absolutePath, "utf-8");
         const lines = content.split(/\r?\n/);
+        const childProcessAliases = this.collectChildProcessAliases(lines);
 
         for (let i = 0; i < lines.length; i += 1) {
-          const line = lines[i] ?? "";
-          for (const { category, re } of patterns) {
-            if (re.test(line)) {
+          const line = stripScanNoise(lines[i] ?? "");
+          if (!line) {
+            continue;
+          }
+
+          const hasSource = this.hasUserInputSource(line);
+          const confidence = this.inferConfidence(line);
+          const sourceHint = this.extractUserInputHint(line);
+
+          if (xssPatterns.some((pattern) => pattern.test(line))) {
+            if (confidence === "low") {
+              continue;
+            }
+
+            const key = `${path}:${i + 1}:xss`;
+            if (!seen.has(key)) {
               findings.push({
                 path,
                 line: i + 1,
-                category,
-                excerpt: line.trim().slice(0, 260),
+                category: "xss",
+                excerpt: line.slice(0, 260),
+                confidence: hasSource ? "high" : "medium",
+                sourceHint,
               });
-              break;
+              seen.add(key);
+            }
+
+            continue;
+          }
+
+          if (injectionPatterns.some((pattern) => pattern.test(line))) {
+            if (confidence === "low") {
+              continue;
+            }
+
+            const key = `${path}:${i + 1}:injection`;
+            if (!seen.has(key)) {
+              findings.push({
+                path,
+                line: i + 1,
+                category: "injection",
+                excerpt: line.slice(0, 260),
+                confidence,
+                sourceHint,
+              });
+              seen.add(key);
+            }
+
+            continue;
+          }
+
+          if (this.hasChildProcessCall(line, childProcessAliases)) {
+            const key = `${path}:${i + 1}:cmd`;
+            if (!seen.has(key)) {
+              findings.push({
+                path,
+                line: i + 1,
+                category: "cmd-injection",
+                excerpt: line.slice(0, 260),
+                confidence: hasSource ? "high" : "medium",
+                sourceHint,
+              });
+              seen.add(key);
+            }
+
+            continue;
+          }
+
+          if (pathTraversalPatterns.some((pattern) => pattern.test(line)) && hasSource) {
+            const key = `${path}:${i + 1}:path`;
+            if (!seen.has(key)) {
+              findings.push({
+                path,
+                line: i + 1,
+                category: "path-traversal",
+                excerpt: line.slice(0, 260),
+                confidence: "high",
+                sourceHint,
+              });
+              seen.add(key);
             }
           }
         }
@@ -331,10 +587,17 @@ export class VirtualIdeTools {
     return out;
   }
 
+  private ensureGuidelineBudget(): void {
+    this.budgets.readGuideline -= 1;
+    if (this.budgets.readGuideline < 0) {
+      throw new Error("Tool budget exceeded for read_guidelines.");
+    }
+  }
+
   private async searchText(query: string, maxResults: number): Promise<SearchHit[]> {
     this.ensureBudget("searchText");
 
-    const resolvedMax = Math.max(1, Math.min(maxResults, 50));
+    const resolvedMax = Math.max(1, Math.min(maxResults, 1000));
     const normalizedQuery = query.toLowerCase();
     const hits: SearchHit[] = [];
 

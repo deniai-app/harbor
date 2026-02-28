@@ -7,7 +7,7 @@
     "dev": "bun --watch src/index.ts",
     "build": "tsgo --noEmit",
     "start": "bun src/index.ts",
-    "test": "vitest run",
+    "test": "bun test",
     "lint": "oxlint -c ../../.oxlintrc.json .",
     "lint:fix": "oxlint -c ../../.oxlintrc.json --fix .",
     "typecheck": "tsgo --noEmit"

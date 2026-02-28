@@ -25,7 +25,7 @@ function buildSystemPrompt(): string {
     "- Before returning final JSON, call read_guidelines and incorporate project policy/security instructions from SECURITY.md and README/CONTRIBUTING when relevant.",
     "- 1 suggestion code block must be <= 10 lines.",
     "- If multiple high-confidence improvements exist, return multiple suggestions.",
-    "- Target 3-8 suggestions when safe; return fewer only if confidence is limited.",
+    "- Target 3-8 findings when safe; return fewer only if confidence is limited.",
     "- No spec changes, no large refactors, no new dependencies.",
     "- If uncertain, return no suggestion.",
     "- You only have read-only virtual IDE tools.",
@@ -45,6 +45,7 @@ function buildSystemPrompt(): string {
     "- secrets exposure, weak crypto/randomness, token/session flaws",
     "- deserialization/prototype pollution/ReDoS/race conditions",
     "- unsafe eval/shell usage and missing input validation",
+    "- `scan_security_sinks` is heuristic: trust high/medium confidence findings as hints, and re-verify with read_file/search_text before suggesting. Low-confidence hits should be treated as optional only.",
     "Avoid style-only suggestions unless they materially improve quality.",
     "Return strict JSON:",
     '{"suggestions":[{"path":"string","line":123,"body":"optional title\n```suggestion\n...\n```"}],"overallStatus":"ok|uncertain","allowAutoApprove":false,"overallComment":"string"}',
@@ -60,6 +61,7 @@ function buildSystemPrompt(): string {
 }
 
 function buildUserPrompt(input: GenerateSuggestionInput): string {
+
   const changedSummary = input.changedFiles
     .map((file) => {
       const patchInfo = file.patch
@@ -294,9 +296,9 @@ function normalizeResult(raw: unknown): ReviewSuggestionResult {
       path: item.path.replace(/^\.\//, ""),
       line,
       body: safeBody,
-    });
+if (suggestions.length >= 120) {
 
-    if (suggestions.length >= 12) {
+    if (suggestions.length >= 999) {
       break;
     }
   }
@@ -368,7 +370,7 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
           description: "Search text in changed files and return compact matches.",
           inputSchema: z.object({
             query: z.string(),
-            max_results: z.number().int().positive().max(50).default(20),
+            max_results: z.number().int().positive().max(1000).default(200),
           }),
           execute: async ({ query, max_results }) => {
             return input.virtualIdeTools.call("search_text", { query, max_results });
@@ -382,7 +384,8 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
           },
         }),
         scan_security_sinks: tool({
-          description: "Scan changed files for common security sinks (XSS, command injection, path traversal).",
+          description:
+            "Scan changed files for common security sink patterns and include per-hit confidence and sourceHint when available.",
           inputSchema: z.object({}),
           execute: async () => {
             return input.virtualIdeTools.call("scan_security_sinks", {});
@@ -405,7 +408,7 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
           },
         }),
       },
-      stopWhen: stepCountIs(28),
+      stopWhen: stepCountIs(200),
       prepareStep: ({ stepNumber }) => {
         if (stepNumber === 0) {
           return {
@@ -451,7 +454,7 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
 
       const seen = new Set<string>();
       const validatedSuggestions: SuggestionCandidate[] = [];
-      const MAX_PREVIEW_CHECKS = 12;
+      const MAX_PREVIEW_CHECKS = 120;
       let previewChecks = 0;
       for (const suggestion of normalized.suggestions) {
         if (previewChecks >= MAX_PREVIEW_CHECKS) {
