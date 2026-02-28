@@ -476,7 +476,7 @@ function buildCompletedReviewingComment(params: {
   ].join("\n");
 }
 
-const REVIEWING_CHECK_NAME = "Reviewing Status";
+const REVIEWING_CHECK_NAME = "Deni AI Harbor";
 
 function buildShortCommitStatusDescription(summary: string): string {
   const trimmedSummary = summary.trim();
