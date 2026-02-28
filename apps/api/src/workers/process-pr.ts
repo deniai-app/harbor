@@ -507,24 +507,24 @@ function buildCompletedReviewingCheckOutput(params: {
   error?: unknown;
   elapsedSeconds: number;
 }): { title: string; summary: string; text: string } {
-  let resultSummary = "Review processing completed.";
+  let resultSummary = "Harbor review completed.";
   let title = "Harbor review completed";
 
   if (params.error) {
     title = "Harbor review failed";
-    resultSummary = `Failed: ${String((params.error as Error)?.message ?? params.error)}`;
+    resultSummary = `Harbor review failed: ${String((params.error as Error)?.message ?? params.error)}`;
   } else if (params.outcome?.status === "posted") {
     title = "Harbor review posted";
-    resultSummary = `Review submitted (${params.outcome.inlineCommentCount} inline comments).`;
+    resultSummary = `Harbor review posted (${params.outcome.inlineCommentCount} inline comments).`;
   } else if (params.outcome?.status === "approved") {
     title = "Harbor approved PR";
-    resultSummary = "Approved (no actionable issues).";
+    resultSummary = "Harbor approved PR (no actionable issues).";
   } else if (params.outcome?.status === "no_suggestions") {
     title = "Harbor review completed";
-    resultSummary = "No safely postable suggestions were found.";
+    resultSummary = "Harbor review completed with no safely postable suggestions.";
   } else if (params.outcome?.status === "skipped_no_llm") {
     title = "Harbor review skipped";
-    resultSummary = "Skipped because no LLM provider is configured.";
+    resultSummary = "Harbor review skipped because no LLM provider is configured.";
   }
 
   const summaryBody = params.outcome?.hasSummaryBody
