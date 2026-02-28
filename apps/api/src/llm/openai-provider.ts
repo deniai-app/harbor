@@ -2,7 +2,6 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { generateText, stepCountIs, tool } from "ai";
 import type { SuggestionCandidate } from "@workspace/shared";
 import { z } from "zod";
-import type { ReviewProfile } from "../config/env";
 import {
   REVIEW_OK_COMMENT,
   type GenerateReviewingCommentInput,
@@ -13,57 +12,7 @@ import {
 
 const ALL_TOOL_NAMES = ["list_dir", "get_changed_files", "read_file", "search_text", "read_guidelines", "scan_security_sinks", "preview_suggestion"] as const;
 
-type ReviewProfileConfig = {
-  label: "Low" | "Default" | "High";
-  temperature: number;
-  maxSuggestions: number;
-  maxPreviewChecks: number;
-  stopStep: number;
-  targetHint: string;
-  noiseHint: string;
-  qualityHint: string;
-};
-
-function getReviewProfileConfig(profile: ReviewProfile): ReviewProfileConfig {
-  if (profile === "low") {
-    return {
-      label: "Low",
-      temperature: 0.28,
-      maxSuggestions: 4,
-      maxPreviewChecks: 10,
-      stopStep: 18,
-      targetHint: "Target 1-3 high-confidence findings only.",
-      noiseHint: "Favor speed and low-noise output.",
-      qualityHint: "Prefer strong and direct issues over exhaustive enumeration.",
-    };
-  }
-
-  if (profile === "high") {
-    return {
-      label: "High",
-      temperature: 0.0,
-      maxSuggestions: 24,
-      maxPreviewChecks: 28,
-      stopStep: 60,
-      targetHint: "Target 6-24 findings when actionable patterns are detected.",
-      noiseHint: "Allow fuller coverage with more candidates and deeper verification.",
-      qualityHint: "Prioritize security, XSS, injection, authz/authn, and data-validation issues with high recall.",
-    };
-  }
-
-  return {
-    label: "Default",
-    temperature: 0.12,
-    maxSuggestions: 12,
-    maxPreviewChecks: 12,
-    stopStep: 28,
-    targetHint: "Target 3-8 findings when safe.",
-    noiseHint: "Balanced speed and noise; avoid speculative suggestions.",
-    qualityHint: "Keep suggestions actionable and concise for changed lines only.",
-  };
-}
-
-function buildSystemPrompt(profileConfig: ReviewProfileConfig): string {
+function buildSystemPrompt(): string {
   return [
     "You are a comprehensive pull request reviewer.",
     "Goal: find actionable issues across correctness, security, reliability, performance, and maintainability.",
@@ -76,8 +25,7 @@ function buildSystemPrompt(profileConfig: ReviewProfileConfig): string {
     "- Before returning final JSON, call read_guidelines and incorporate project policy/security instructions from SECURITY.md and README/CONTRIBUTING when relevant.",
     "- 1 suggestion code block must be <= 10 lines.",
     "- If multiple high-confidence improvements exist, return multiple suggestions.",
-    `- Review mode: ${profileConfig.label} profile.` + " " + profileConfig.noiseHint + " " + profileConfig.qualityHint,
-    `- ${profileConfig.targetHint}`,
+    "- Target 3-8 findings when safe; return fewer only if confidence is limited.",
     "- No spec changes, no large refactors, no new dependencies.",
     "- If uncertain, return no suggestion.",
     "- You only have read-only virtual IDE tools.",
@@ -112,7 +60,6 @@ function buildSystemPrompt(profileConfig: ReviewProfileConfig): string {
 }
 
 function buildUserPrompt(input: GenerateSuggestionInput): string {
-  const profileHeader = `Review profile: ${input.reviewProfile}`;
 
   const changedSummary = input.changedFiles
     .map((file) => {
@@ -134,7 +81,6 @@ function buildUserPrompt(input: GenerateSuggestionInput): string {
     `Repository: ${input.owner}/${input.repo}`,
     `PR: #${input.pullNumber}`,
     `Head SHA: ${input.headSha}`,
-    profileHeader,
     "Review only changed files with a comprehensive quality perspective.",
     "When patch is missing, use search_text and read_file sparingly.",
     "If no high-confidence safe suggestion exists, return empty suggestions.",
@@ -308,7 +254,7 @@ function previewSuggestion(params: {
     });
 }
 
-function normalizeResult(raw: unknown, profile: ReviewProfile, maxSuggestions: number): ReviewSuggestionResult {
+function normalizeResult(raw: unknown): ReviewSuggestionResult {
   const payload = raw as {
     suggestions?: Array<{
       path?: string;
@@ -351,7 +297,7 @@ function normalizeResult(raw: unknown, profile: ReviewProfile, maxSuggestions: n
       body: safeBody,
     });
 
-    if (suggestions.length >= maxSuggestions) {
+    if (suggestions.length >= 12) {
       break;
     }
   }
@@ -369,7 +315,6 @@ function normalizeResult(raw: unknown, profile: ReviewProfile, maxSuggestions: n
     allowAutoApprove: payload.allowAutoApprove === true,
     overallComment:
       typeof payload.overallComment === "string" ? payload.overallComment.trim() : undefined,
-    reviewProfileUsed: profile,
   };
 }
 
@@ -384,11 +329,10 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
   }
 
   async generateSuggestions(input: GenerateSuggestionInput): Promise<ReviewSuggestionResult> {
-    const profileConfig = getReviewProfileConfig(input.reviewProfile);
     const result = await generateText({
       model: this.modelFactory(this.model),
-      temperature: profileConfig.temperature,
-      system: buildSystemPrompt(profileConfig),
+      temperature: 0.1,
+      system: buildSystemPrompt(),
       prompt: buildUserPrompt(input),
       tools: {
         list_dir: tool({
@@ -462,7 +406,7 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
           },
         }),
       },
-      stopWhen: stepCountIs(profileConfig.stopStep),
+      stopWhen: stepCountIs(28),
       prepareStep: ({ stepNumber }) => {
         if (stepNumber === 0) {
           return {
@@ -504,11 +448,11 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
 
     try {
       const parsed = JSON.parse(extractJson(content)) as unknown;
-      const normalized = normalizeResult(parsed, input.reviewProfile, profileConfig.maxSuggestions);
+      const normalized = normalizeResult(parsed);
 
       const seen = new Set<string>();
       const validatedSuggestions: SuggestionCandidate[] = [];
-      const MAX_PREVIEW_CHECKS = profileConfig.maxPreviewChecks;
+      const MAX_PREVIEW_CHECKS = 12;
       let previewChecks = 0;
       for (const suggestion of normalized.suggestions) {
         if (previewChecks >= MAX_PREVIEW_CHECKS) {

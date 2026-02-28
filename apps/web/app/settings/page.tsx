@@ -35,15 +35,6 @@ export default function SettingsPage() {
       </section>
 
       <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6">
-        <h2 className="text-lg font-medium text-zinc-900">Review profile configuration</h2>
-        <p className="mt-3 text-sm text-zinc-600">
-          Set <code className="rounded bg-zinc-100 px-1 py-0.5">REVIEW_PROFILE</code> to <b>low</b>, <b>default</b> (default), or <b>high</b>.
-          High mode uses heavier tool usage and broader suggestion coverage (max quality/speed at the cost of higher runtime),
-          while Low is faster and quieter. High profile can optionally use <code className="rounded bg-zinc-100 px-1 py-0.5">LLM_MODEL_HIGH</code> (default: gpt-5.3-codex).
-        </p>
-      </section>
-
-      <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6">
         <h2 className="text-lg font-medium text-zinc-900">Webhook URL</h2>
         <p className="mt-3 text-sm text-zinc-600">
           <code className="rounded bg-zinc-100 px-1 py-0.5">{`POST {BASE_URL}/webhooks/github`}</code>
