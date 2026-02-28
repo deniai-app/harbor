@@ -8,35 +8,57 @@ export default function Page() {
         Deni AI Harbor
       </p>
       <h1 className="mt-4 text-4xl font-semibold tracking-tight text-zinc-900 sm:text-5xl">
-        Automatically post safe PR suggestions as GitHub review comments
+        GitHub PR review automation for OSS and self-hosted projects
       </h1>
       <p className="mt-5 max-w-2xl text-base leading-7 text-zinc-600">
-        Harbor receives GitHub pull_request webhooks, analyzes diffs, and posts inline
-        <code className="mx-1 rounded bg-zinc-100 px-1 py-0.5">```suggestion```</code>
-        review comments only when changes are safe.
+        Deni AI Harbor analyzes pull requests, posts safe and actionable review feedback,
+        and keeps approval handling deterministic so teams can merge with confidence and
+        less review churn.
       </p>
 
       <div className="mt-8 flex flex-wrap gap-3">
         <Button asChild>
-          <Link href="/settings">Open settings</Link>
+          <a href="https://github.com/apps/deni-ai-harbor" rel="noreferrer" target="_blank">
+            Install Deni AI Harbor
+          </a>
         </Button>
         <Button asChild variant="outline">
-          <a href="https://github.com/settings/apps" rel="noreferrer" target="_blank">
-            GitHub Apps
-          </a>
+          <Link href="/settings">Setup guide</Link>
         </Button>
       </div>
 
-      <section className="mt-12 grid gap-4 sm:grid-cols-3">
-        {[
-          "Webhook signature verification (X-Hub-Signature-256)",
-          "PR files API + diff position mapping",
-          "Read-only virtual IDE tools + LLM function calling",
-        ].map((item) => (
+      <section className="mt-12">
+        <h2 className="text-xl font-semibold tracking-tight text-zinc-900">Features</h2>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          {[
+            "Fast review iteration with automated PR feedback in minutes.",
+            "Reduced review churn through focused, safe change suggestions.",
+            "Deterministic approval handling for predictable merge readiness.",
+            "Works for OSS repositories and self-hosted project workflows.",
+          ].map((item) => (
+            <div className="rounded-xl border border-zinc-200 bg-white p-4" key={item}>
+              <p className="text-sm text-zinc-700">{item}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="mt-8">
+        <h2 className="text-xl font-semibold tracking-tight text-zinc-900">How it works</h2>
+        <div className="mt-4 grid gap-4 sm:grid-cols-3">
+          {[
+            "Install the GitHub App on your repository or organization.",
+            "Open or update a pull request and Harbor reviews the diff.",
+            "Apply feedback, iterate quickly, and merge with confidence.",
+          ].map((item, index) => (
           <div className="rounded-xl border border-zinc-200 bg-white p-4" key={item}>
-            <p className="text-sm text-zinc-700">{item}</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">
+              Step {index + 1}
+            </p>
+            <p className="mt-2 text-sm text-zinc-700">{item}</p>
           </div>
-        ))}
+          ))}
+        </div>
       </section>
     </main>
   );

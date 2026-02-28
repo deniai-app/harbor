@@ -21,6 +21,25 @@ export default function SettingsPage() {
       </div>
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-6">
+        <h2 className="text-lg font-medium text-zinc-900">Install Deni AI Harbor</h2>
+        <ol className="mt-4 space-y-2 text-sm text-zinc-700">
+          <li>1. Open the Deni AI Harbor GitHub App installation page.</li>
+          <li>2. Choose your organization or repository access scope.</li>
+          <li>3. Complete install, then configure the webhook and environment values below.</li>
+        </ol>
+        <p className="mt-4 text-sm">
+          <a
+            className="underline"
+            href="https://github.com/apps/deni-ai-harbor"
+            rel="noreferrer"
+            target="_blank"
+          >
+            Install Deni AI Harbor on GitHub
+          </a>
+        </p>
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6">
         <h2 className="text-lg font-medium text-zinc-900">Required environment variables</h2>
         <ul className="mt-4 space-y-2">
           {envKeys.map((key) => (
