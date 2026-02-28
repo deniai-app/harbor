@@ -4,13 +4,13 @@ import { Button } from "@workspace/ui/components/button";
 export default function Page() {
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-4xl flex-col justify-center px-6 py-16">
-      <p className="text-muted-foreground text-sm font-semibold uppercase tracking-[0.2em]">
+      <p className="text-muted-foreground text-sm font-semibold uppercase tracking-tight">
         Deni AI Harbor
       </p>
       <h1 className="mt-4 text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
         GitHub PR review automation for OSS and self-hosted projects
       </h1>
-      <p className="text-muted-foreground mt-5 max-w-2xl text-base leading-7">
+      <p className="text-muted-foreground mt-5 max-w-2xl text-base leading-7 tracking-tight">
         Deni AI Harbor analyzes pull requests, posts safe and actionable review feedback,
         and keeps approval handling deterministic so teams can merge with confidence and
         less review churn.
@@ -37,7 +37,7 @@ export default function Page() {
             "Works for OSS repositories and self-hosted project workflows.",
           ].map((item) => (
             <div className="bg-background border-border rounded-xl border p-4" key={item}>
-              <p className="text-muted-foreground text-sm">{item}</p>
+              <p className="text-muted-foreground text-sm tracking-tight">{item}</p>
             </div>
           ))}
         </div>
@@ -52,10 +52,10 @@ export default function Page() {
             "Apply feedback, iterate quickly, and merge with confidence.",
           ].map((item, index) => (
             <div className="bg-background border-border rounded-xl border p-4" key={item}>
-              <p className="text-muted-foreground text-xs font-semibold uppercase tracking-[0.16em]">
+              <p className="text-muted-foreground text-xs font-semibold uppercase tracking-tight">
                 Step {index + 1}
               </p>
-              <p className="text-muted-foreground mt-2 text-sm">{item}</p>
+              <p className="text-muted-foreground mt-2 text-sm tracking-tight">{item}</p>
             </div>
           ))}
         </div>
