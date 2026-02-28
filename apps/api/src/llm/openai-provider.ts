@@ -296,7 +296,7 @@ function normalizeResult(raw: unknown): ReviewSuggestionResult {
       path: item.path.replace(/^\.\//, ""),
       line,
       body: safeBody,
-    });
+if (suggestions.length >= 120) {
 
     if (suggestions.length >= 999) {
       break;
