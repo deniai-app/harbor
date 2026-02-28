@@ -4,15 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vinext dev --turbopack",
-    "build": "vinext build",
-    "start": "vinext start",
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt",
-    "typecheck": "tsgo --noEmit",
-    "dev:vinext": "vite dev --port 3001",
-    "build:vinext": "vite build"
+    "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
     "@workspace/ui": "workspace:*",
@@ -22,11 +20,9 @@
     "radix-ui": "^1.4.3",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-server-dom-webpack": "^19.2.4",
-    "vinext": "^0.0.15"
+    "react-server-dom-webpack": "^19.2.4"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.25.6",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^25.1.0",
     "@types/react": "^19.2.10",
@@ -34,8 +30,6 @@
     "@typescript/native-preview": "^7.0.0-dev.20260223.1",
     "@vitejs/plugin-rsc": "^0.5.21",
     "@workspace/typescript-config": "workspace:*",
-    "typescript": "^5.9.3",
-    "vite": "^7.3.1",
-    "wrangler": "^4.69.0"
+    "typescript": "^5.9.3"
   }
 }
