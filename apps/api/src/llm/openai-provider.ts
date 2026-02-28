@@ -297,7 +297,7 @@ function normalizeResult(raw: unknown): ReviewSuggestionResult {
       body: safeBody,
     });
 
-    if (suggestions.length >= 12) {
+    if (suggestions.length >= 999) {
       break;
     }
   }
@@ -369,7 +369,7 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
           description: "Search text in changed files and return compact matches.",
           inputSchema: z.object({
             query: z.string(),
-            max_results: z.number().int().positive().max(50).default(20),
+            max_results: z.number().int().positive().max(1000).default(200),
           }),
           execute: async ({ query, max_results }) => {
             return input.virtualIdeTools.call("search_text", { query, max_results });
@@ -406,7 +406,7 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
           },
         }),
       },
-      stopWhen: stepCountIs(28),
+      stopWhen: stepCountIs(200),
       prepareStep: ({ stepNumber }) => {
         if (stepNumber === 0) {
           return {
@@ -452,7 +452,7 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
 
       const seen = new Set<string>();
       const validatedSuggestions: SuggestionCandidate[] = [];
-      const MAX_PREVIEW_CHECKS = 12;
+      const MAX_PREVIEW_CHECKS = 120;
       let previewChecks = 0;
       for (const suggestion of normalized.suggestions) {
         if (previewChecks >= MAX_PREVIEW_CHECKS) {

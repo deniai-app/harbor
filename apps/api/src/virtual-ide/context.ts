@@ -75,14 +75,13 @@ interface SearchHit {
 export class VirtualIdeTools {
   private readonly changedFileSet: Set<string>;
   private readonly budgets: ToolBudgets = {
-    listDir: 3,
-    readFile: 20,
-    searchText: 5,
-    readGuideline: 2,
-    securityScan: 2,
+    listDir: 200,
+    readFile: 2000,
+    searchText: 200,
+    readGuideline: 20,
+    securityScan: 50,
   };
 
-  private totalReadLines = 0;
   private totalCalls = 0;
 
   constructor(private readonly options: VirtualIdeOptions) {
@@ -172,8 +171,8 @@ export class VirtualIdeTools {
   private async listDir(path: string, depth: number, maxEntries: number): Promise<string[]> {
     this.ensureBudget("listDir");
 
-    const resolvedDepth = Number.isFinite(depth) ? Math.max(0, Math.min(depth, 10)) : 3;
-    const resolvedMax = Number.isFinite(maxEntries) ? Math.max(1, Math.min(maxEntries, 2000)) : 400;
+    const resolvedDepth = Number.isFinite(depth) ? Math.max(0, Math.min(depth, 24)) : 3;
+    const resolvedMax = Number.isFinite(maxEntries) ? Math.max(1, Math.min(maxEntries, 10000)) : 400;
 
     const relative = normalizeRepoRelativePath(path);
     const startDir = this.resolveRepoPath(relative);
@@ -226,9 +225,6 @@ export class VirtualIdeTools {
     }
 
     const requestedLineCount = endLine - startLine + 1;
-    if (requestedLineCount > 80) {
-      throw new Error(`read_file can read at most 80 lines per call.`);
-    }
 
     const relativePath = normalizeRepoRelativePath(path);
     if (!this.isAllowedReadPath(relativePath)) {
@@ -237,10 +233,6 @@ export class VirtualIdeTools {
 
     if (isHiddenSecretFile(basename(relativePath))) {
       throw new Error("Access denied.");
-    }
-
-    if (this.totalReadLines + requestedLineCount > 5000) {
-      throw new Error("read_file total line budget exceeded (5000 lines per PR).");
     }
 
     const absolutePath = this.resolveRepoPath(relativePath);
@@ -254,8 +246,6 @@ export class VirtualIdeTools {
     for (let i = startIndex; i < endIndex; i += 1) {
       numberedLines.push(`${i + 1}| ${lines[i] ?? ""}`);
     }
-
-    this.totalReadLines += requestedLineCount;
 
     return numberedLines.join("\n");
   }
@@ -335,7 +325,7 @@ export class VirtualIdeTools {
   private async searchText(query: string, maxResults: number): Promise<SearchHit[]> {
     this.ensureBudget("searchText");
 
-    const resolvedMax = Math.max(1, Math.min(maxResults, 50));
+    const resolvedMax = Math.max(1, Math.min(maxResults, 1000));
     const normalizedQuery = query.toLowerCase();
     const hits: SearchHit[] = [];
 
