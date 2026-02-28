@@ -2,6 +2,7 @@ import type { GitHubPullRequestFile, SuggestionCandidate } from "@workspace/shar
 import { buildAddedLineToPositionMap, extractPatchByFile } from "../diff/patch";
 import { createWorkdirSession } from "../git/workdir";
 import {
+  createCommitStatus,
   createIssueComment,
   createIssueCommentReaction,
   createPullRequestReview,
@@ -12,6 +13,7 @@ import {
   getPullRequestFiles,
   getPullRequestHead,
   listIssueComments,
+  mapCommitStatusState,
   updateIssueComment,
   type ReviewCommentInput,
 } from "../github/client";
@@ -476,6 +478,15 @@ function buildCompletedReviewingComment(params: {
 
 const REVIEWING_CHECK_NAME = "Reviewing Status";
 
+function buildShortCommitStatusDescription(summary: string): string {
+  const trimmedSummary = summary.trim();
+  if (trimmedSummary.length <= 140) {
+    return trimmedSummary;
+  }
+
+  return `${trimmedSummary.slice(0, 137)}...`;
+}
+
 function buildInProgressReviewingCheckOutput(params: {
   owner: string;
   repo: string;
@@ -822,11 +833,40 @@ async function runReviewForPullRequest(
         pullNumber: params.pullNumber,
       }),
     });
+    console.info(
+      `[review] Using check run ${checkRunId} for ${params.owner}/${params.repo}#${params.pullNumber}`,
+    );
   } catch (error) {
     console.warn(
       `[review] Failed to create check run for ${params.owner}/${params.repo}#${params.pullNumber}`,
       error,
     );
+
+    try {
+      const pendingStatusSummary = buildInProgressReviewingCheckOutput({
+        owner: params.owner,
+        repo: params.repo,
+        pullNumber: params.pullNumber,
+      }).summary;
+
+      await createCommitStatus({
+        token,
+        owner: params.owner,
+        repo: params.repo,
+        sha: headSha,
+        context: REVIEWING_CHECK_NAME,
+        state: mapCommitStatusState("pending"),
+        description: buildShortCommitStatusDescription(pendingStatusSummary),
+      });
+      console.info(
+        `[review] Check run unavailable, fallback commit status set to pending for ${params.owner}/${params.repo}#${params.pullNumber}`,
+      );
+    } catch (statusError) {
+      console.warn(
+        `[review] Failed to create pending fallback commit status for ${params.owner}/${params.repo}#${params.pullNumber}`,
+        statusError,
+      );
+    }
   }
 
   let outcome: ReviewRunOutcome | undefined;
@@ -977,10 +1017,18 @@ async function runReviewForPullRequest(
       }
     }
 
-    if (checkRunId) {
-      const finishedAt = Date.now();
-      const elapsedSeconds = Math.max(1, Math.round((finishedAt - reviewStartedAt) / 1000));
+    const finishedAt = Date.now();
+    const elapsedSeconds = Math.max(1, Math.round((finishedAt - reviewStartedAt) / 1000));
+    const completedOutput = buildCompletedReviewingCheckOutput({
+      owner: params.owner,
+      repo: params.repo,
+      pullNumber: params.pullNumber,
+      outcome,
+      error: reviewError,
+      elapsedSeconds,
+    });
 
+    if (checkRunId) {
       try {
         await updateCheckRun({
           token,
@@ -992,28 +1040,46 @@ async function runReviewForPullRequest(
             outcome,
             error: reviewError,
           }),
-          output: buildCompletedReviewingCheckOutput({
-            owner: params.owner,
-            repo: params.repo,
-            pullNumber: params.pullNumber,
-            outcome,
-            error: reviewError,
-            elapsedSeconds,
-          }),
+          output: completedOutput,
           completedAt: new Date(finishedAt).toISOString(),
         });
+        console.info(
+          `[review] Updated check run ${checkRunId} for ${params.owner}/${params.repo}#${params.pullNumber}`,
+        );
       } catch (error) {
         console.warn(
           `[review] Failed to update check run ${checkRunId} for ${params.owner}/${params.repo}#${params.pullNumber}`,
           error,
         );
       }
-
-      if (reviewError) {
+    } else {
+      const finalStatusState = mapCommitStatusState("completed", reviewError);
+      const finalDescription = buildShortCommitStatusDescription(completedOutput.summary);
+      try {
+        await createCommitStatus({
+          token,
+          owner: params.owner,
+          repo: params.repo,
+          sha: headSha,
+          context: REVIEWING_CHECK_NAME,
+          state: finalStatusState,
+          description: finalDescription,
+        });
         console.info(
-          `[review] Checked failure for ${params.owner}/${params.repo}#${params.pullNumber}: ${String((reviewError as Error)?.message ?? reviewError)}`,
+          `[review] Check run unavailable, fallback commit status finalized state=${finalStatusState} for ${params.owner}/${params.repo}#${params.pullNumber}`,
+        );
+      } catch (statusError) {
+        console.warn(
+          `[review] Failed to finalize fallback commit status for ${params.owner}/${params.repo}#${params.pullNumber}`,
+          statusError,
         );
       }
+    }
+
+    if (reviewError) {
+      console.info(
+        `[review] Checked failure for ${params.owner}/${params.repo}#${params.pullNumber}: ${String((reviewError as Error)?.message ?? reviewError)}`,
+      );
     }
   }
 }

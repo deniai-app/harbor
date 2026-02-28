@@ -246,10 +246,22 @@ export type CheckRunConclusion =
   | "action_required"
   | "stale"
   | "skipped";
+export type CommitStatusState = "error" | "failure" | "pending" | "success";
 
 export interface CheckRun {
   id: number;
   name: string;
+}
+
+export function mapCommitStatusState(
+  mode: "pending" | "completed",
+  reviewError?: unknown,
+): CommitStatusState {
+  if (mode === "pending") {
+    return "pending";
+  }
+
+  return reviewError ? "failure" : "success";
 }
 
 export async function createCheckRun(params: {
@@ -304,6 +316,34 @@ export async function updateCheckRun(params: {
       conclusion: params.conclusion,
       output: params.output,
       completed_at: params.completedAt,
+    }),
+  );
+}
+
+export async function createCommitStatus(params: {
+  token: string;
+  owner: string;
+  repo: string;
+  sha: string;
+  context: string;
+  state: CommitStatusState;
+  description: string;
+  targetUrl?: string;
+}): Promise<void> {
+  const octokit = buildClient(params.token);
+
+  const normalizedDescription =
+    params.description.length > 140 ? `${params.description.slice(0, 137)}...` : params.description;
+
+  await handleApiResponse(async () =>
+    octokit.rest.repos.createCommitStatus({
+      owner: params.owner,
+      repo: params.repo,
+      sha: params.sha,
+      context: params.context,
+      state: params.state,
+      description: normalizedDescription,
+      target_url: params.targetUrl,
     }),
   );
 }
