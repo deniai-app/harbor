@@ -550,7 +550,11 @@ function mapReviewOutcomeToConclusion(params: {
     return "failure";
   }
 
-  if (params.outcome?.status === "approved") {
+  if (
+    params.outcome?.status === "approved" ||
+    params.outcome?.status === "no_suggestions" ||
+    params.outcome?.status === "skipped_no_llm"
+  ) {
     return "success";
   }
 
