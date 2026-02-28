@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { buildAddedLineToPositionMap, extractPatchByFile } from "../src/diff/patch";
 
 describe("extractPatchByFile", () => {
