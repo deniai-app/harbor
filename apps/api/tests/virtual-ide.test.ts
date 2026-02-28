@@ -31,10 +31,7 @@ describe("VirtualIdeTools security sink scan", () => {
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(
       filePath,
-      [
-        'const container = document.body;',
-        'container.innerHTML = req.body.html;',
-      ].join("\n"),
+      ["const container = document.body;", "container.innerHTML = req.body.html;"].join("\n"),
     );
 
     const tools = new VirtualIdeTools({
@@ -72,9 +69,9 @@ describe("VirtualIdeTools security sink scan", () => {
       filePath,
       [
         'import { readFileSync } from "fs";',
-        'setTimeout(() => rotate(), 1000);',
-        'const html = sanitize(req.body.html);',
-        'output.innerHTML = sanitize(`<span>${html}</span>`);',
+        "setTimeout(() => rotate(), 1000);",
+        "const html = sanitize(req.body.html);",
+        "output.innerHTML = sanitize(`<span>${html}</span>`);",
         'const p = path.join("/app", "static", "config");',
       ].join("\n"),
     );
@@ -108,8 +105,8 @@ describe("VirtualIdeTools security sink scan", () => {
         'import { execSync } from "child_process";',
         'import * as path from "path";',
         'const safePath = path.join(process.cwd(), "public", "assets");',
-        'const userPath = path.join(process.cwd(), req.query.file);',
-        'execSync(req.body.command);',
+        "const userPath = path.join(process.cwd(), req.query.file);",
+        "execSync(req.body.command);",
       ].join("\n"),
     );
 

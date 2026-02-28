@@ -230,6 +230,84 @@ export interface ReviewCommentInput {
 
 export type PullRequestReviewEvent = "COMMENT" | "APPROVE";
 
+export interface CheckOutput {
+  title: string;
+  summary: string;
+  text?: string;
+}
+
+export type CheckRunStatus = "queued" | "in_progress" | "completed";
+export type CheckRunConclusion =
+  | "success"
+  | "failure"
+  | "neutral"
+  | "cancelled"
+  | "timed_out"
+  | "action_required"
+  | "stale"
+  | "skipped";
+
+export interface CheckRun {
+  id: number;
+  name: string;
+}
+
+export async function createCheckRun(params: {
+  token: string;
+  owner: string;
+  repo: string;
+  name: string;
+  headSha: string;
+  detailsUrl?: string;
+  output: CheckOutput;
+}): Promise<number> {
+  const octokit = buildClient(params.token);
+
+  const data = await handleApiResponse(async () =>
+    octokit.rest.checks.create({
+      owner: params.owner,
+      repo: params.repo,
+      name: params.name,
+      head_sha: params.headSha,
+      status: "in_progress",
+      started_at: new Date().toISOString(),
+      details_url: params.detailsUrl,
+      output: params.output,
+    }),
+  );
+
+  const checkRunId = (data as { id?: number }).id;
+  if (typeof checkRunId !== "number" || !Number.isInteger(checkRunId)) {
+    throw new Error("Failed to parse created check run id.");
+  }
+  return checkRunId;
+}
+
+export async function updateCheckRun(params: {
+  token: string;
+  owner: string;
+  repo: string;
+  checkRunId: number;
+  status: CheckRunStatus;
+  conclusion?: CheckRunConclusion;
+  output?: CheckOutput;
+  completedAt?: string;
+}): Promise<void> {
+  const octokit = buildClient(params.token);
+
+  await handleApiResponse(async () =>
+    octokit.rest.checks.update({
+      owner: params.owner,
+      repo: params.repo,
+      check_run_id: params.checkRunId,
+      status: params.status,
+      conclusion: params.conclusion,
+      output: params.output,
+      completed_at: params.completedAt,
+    }),
+  );
+}
+
 export async function createPullRequestReview(params: {
   token: string;
   owner: string;

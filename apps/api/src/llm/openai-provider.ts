@@ -10,7 +10,15 @@ import {
   type ReviewSuggestionResult,
 } from "./types";
 
-const ALL_TOOL_NAMES = ["list_dir", "get_changed_files", "read_file", "search_text", "read_guidelines", "scan_security_sinks", "preview_suggestion"] as const;
+const ALL_TOOL_NAMES = [
+  "list_dir",
+  "get_changed_files",
+  "read_file",
+  "search_text",
+  "read_guidelines",
+  "scan_security_sinks",
+  "preview_suggestion",
+] as const;
 
 function buildSystemPrompt(): string {
   return [
@@ -61,7 +69,6 @@ function buildSystemPrompt(): string {
 }
 
 function buildUserPrompt(input: GenerateSuggestionInput): string {
-
   const changedSummary = input.changedFiles
     .map((file) => {
       const patchInfo = file.patch
@@ -101,7 +108,10 @@ function extractJson(content: string): string {
 }
 
 function dedupeConsecutiveDuplicateBlock(content: string): string {
-  const lines = content.trim().split("\n").map((line) => line.trimEnd());
+  const lines = content
+    .trim()
+    .split("\n")
+    .map((line) => line.trimEnd());
   if (lines.length < 2) {
     return content.trim();
   }
@@ -173,7 +183,13 @@ function previewSuggestion(params: {
   virtualIdeTools: {
     call: (toolName: string, args: unknown) => Promise<unknown>;
   };
-}): Promise<{ isSafe: boolean; reason: string; previewPatch?: string; before?: string; after?: string }> {
+}): Promise<{
+  isSafe: boolean;
+  reason: string;
+  previewPatch?: string;
+  before?: string;
+  after?: string;
+}> {
   const normalizedPath = params.path.replace(/^\/+/, "");
   const body = extractSuggestionBody(params.suggestionBody).replace(/\n+$/, "");
   const replacementLines = body.split("\n");
@@ -296,9 +312,9 @@ function normalizeResult(raw: unknown): ReviewSuggestionResult {
       path: item.path.replace(/^\.\//, ""),
       line,
       body: safeBody,
-if (suggestions.length >= 120) {
+    });
 
-    if (suggestions.length >= 999) {
+    if (suggestions.length >= 120) {
       break;
     }
   }
@@ -377,7 +393,8 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
           },
         }),
         read_guidelines: tool({
-          description: "Read repository guidelines to apply project-specific review policy (security, style, and review rules).",
+          description:
+            "Read repository guidelines to apply project-specific review policy (security, style, and review rules).",
           inputSchema: z.object({}),
           execute: async () => {
             return input.virtualIdeTools.call("read_guidelines", {});
@@ -392,7 +409,8 @@ export class OpenAiReviewProvider implements ReviewLlmProvider {
           },
         }),
         preview_suggestion: tool({
-          description: "Preview how a suggestion would look when applied to a file line for safety checks.",
+          description:
+            "Preview how a suggestion would look when applied to a file line for safety checks.",
           inputSchema: z.object({
             path: z.string(),
             line: z.number().int().positive(),

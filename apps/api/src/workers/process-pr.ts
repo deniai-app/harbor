@@ -6,6 +6,8 @@ import {
   createIssueCommentReaction,
   createPullRequestReview,
   createPullRequestReviewCommentReaction,
+  createCheckRun,
+  updateCheckRun,
   getPullRequestDiff,
   getPullRequestFiles,
   getPullRequestHead,
@@ -175,9 +177,7 @@ function parseMentionTarget(rawMention: string): MentionTarget | null {
 }
 
 function stripCodeLikeSections(body: string): string {
-  return body
-    .replace(/```[\s\S]*?```/g, "")
-    .replace(/`[^`]*`/g, "");
+  return body.replace(/```[\s\S]*?```/g, "").replace(/`[^`]*`/g, "");
 }
 
 function extractMentionCandidates(body: string): { usernames: Set<string>; userIds: Set<string> } {
@@ -483,6 +483,78 @@ function buildCompletedReviewingComment(params: {
   ].join("\n");
 }
 
+const REVIEWING_CHECK_NAME = "Reviewing Status";
+
+function buildInProgressReviewingCheckOutput(params: {
+  owner: string;
+  repo: string;
+  pullNumber: number;
+}): { title: string; summary: string; text: string } {
+  return {
+    title: "Harbor Review Running",
+    summary: `${params.owner}/${params.repo}#${params.pullNumber} is being reviewed by Deni AI Harbor.`,
+    text: "Inline review and summary will be posted when complete.",
+  };
+}
+
+function buildCompletedReviewingCheckOutput(params: {
+  owner: string;
+  repo: string;
+  pullNumber: number;
+  outcome?: ReviewRunOutcome;
+  error?: unknown;
+  elapsedSeconds: number;
+}): { title: string; summary: string; text: string } {
+  let resultSummary = "Review processing completed.";
+  let title = "Harbor review completed";
+
+  if (params.error) {
+    title = "Harbor review failed";
+    resultSummary = `Failed: ${String((params.error as Error)?.message ?? params.error)}`;
+  } else if (params.outcome?.status === "posted") {
+    title = "Harbor review posted";
+    resultSummary = `Review submitted (${params.outcome.inlineCommentCount} inline comments).`;
+  } else if (params.outcome?.status === "approved") {
+    title = "Harbor approved PR";
+    resultSummary = "Approved (no actionable issues).";
+  } else if (params.outcome?.status === "no_suggestions") {
+    title = "Harbor review completed";
+    resultSummary = "No safely postable suggestions were found.";
+  } else if (params.outcome?.status === "skipped_no_llm") {
+    title = "Harbor review skipped";
+    resultSummary = "Skipped because no LLM provider is configured.";
+  }
+
+  const summaryBody = params.outcome?.hasSummaryBody
+    ? "Overall summary comment posted."
+    : "Overall summary comment was not posted.";
+
+  return {
+    title,
+    summary: `${params.owner}/${params.repo}#${params.pullNumber}: ${resultSummary}`,
+    text: [
+      `Status: ${resultSummary}`,
+      summaryBody,
+      `Estimated processing time: ~${params.elapsedSeconds}s`,
+    ].join("\n\n"),
+  };
+}
+
+function mapReviewOutcomeToConclusion(params: {
+  outcome?: ReviewRunOutcome;
+  error?: unknown;
+}): "success" | "failure" | "neutral" {
+  if (params.error) {
+    return "failure";
+  }
+
+  if (params.outcome?.status === "approved") {
+    return "success";
+  }
+
+  return "neutral";
+}
+
 function normalizePath(path: string): string {
   return path.replace(/^\.\//, "").replaceAll("\\", "/");
 }
@@ -637,17 +709,10 @@ async function runReviewForPullRequest(
   params: ReviewRequestInput,
   deps: ProcessPullRequestEventDeps,
 ): Promise<ReviewRunOutcome> {
-  if (!deps.llmProvider) {
-    console.warn("LLM provider is unavailable. Skipping automated suggestions.");
-    return {
-      status: "skipped_no_llm",
-      inlineCommentCount: 0,
-      hasSummaryBody: false,
-    };
-  }
-
   const token = params.token ?? (await deps.auth.getInstallationToken(params.installationId));
   console.info(`[review] Start review for ${params.owner}/${params.repo}#${params.pullNumber}`);
+
+  const reviewStartedAt = Date.now();
 
   let headSha = params.headSha;
   if (!headSha) {
@@ -666,40 +731,74 @@ async function runReviewForPullRequest(
     );
   }
 
-  const files = await getPullRequestFiles({
-    token,
-    owner: params.owner,
-    repo: params.repo,
-    pullNumber: params.pullNumber,
-  });
-
-  const mergedFiles = await enrichMissingPatches({
-    token,
-    owner: params.owner,
-    repo: params.repo,
-    pullNumber: params.pullNumber,
-    files,
-  });
-
-  let workdirSession: Awaited<ReturnType<typeof createWorkdirSession>>;
+  let checkRunId: number | undefined;
   try {
-    workdirSession = await createWorkdirSession({
+    checkRunId = await createCheckRun({
       token,
-      repoOwner: params.owner,
-      repoName: params.repo,
-      pullNumber: params.pullNumber,
+      owner: params.owner,
+      repo: params.repo,
+      name: REVIEWING_CHECK_NAME,
       headSha,
-      cloneUrl: params.cloneUrl,
+      output: buildInProgressReviewingCheckOutput({
+        owner: params.owner,
+        repo: params.repo,
+        pullNumber: params.pullNumber,
+      }),
     });
   } catch (error) {
-    console.error(
-      `[review] Failed to prepare workdir for ${params.owner}/${params.repo}#${params.pullNumber}. clone_url=${params.cloneUrl ?? "(none)"}`,
+    console.warn(
+      `[review] Failed to create check run for ${params.owner}/${params.repo}#${params.pullNumber}`,
       error,
     );
-    throw error;
   }
 
+  let outcome: ReviewRunOutcome | undefined;
+  let reviewError: unknown;
+  let workdirSession: Awaited<ReturnType<typeof createWorkdirSession>> | undefined;
+
   try {
+    if (!deps.llmProvider) {
+      console.warn("LLM provider is unavailable. Skipping automated suggestions.");
+      outcome = {
+        status: "skipped_no_llm",
+        inlineCommentCount: 0,
+        hasSummaryBody: false,
+      };
+      return outcome;
+    }
+
+    const files = await getPullRequestFiles({
+      token,
+      owner: params.owner,
+      repo: params.repo,
+      pullNumber: params.pullNumber,
+    });
+
+    const mergedFiles = await enrichMissingPatches({
+      token,
+      owner: params.owner,
+      repo: params.repo,
+      pullNumber: params.pullNumber,
+      files,
+    });
+
+    try {
+      workdirSession = await createWorkdirSession({
+        token,
+        repoOwner: params.owner,
+        repoName: params.repo,
+        pullNumber: params.pullNumber,
+        headSha,
+        cloneUrl: params.cloneUrl,
+      });
+    } catch (error) {
+      console.error(
+        `[review] Failed to prepare workdir for ${params.owner}/${params.repo}#${params.pullNumber}. clone_url=${params.cloneUrl ?? "(none)"}`,
+        error,
+      );
+      throw error;
+    }
+
     const virtualIdeTools = new VirtualIdeTools({
       rootDir: workdirSession.workdir,
       changedFiles: mergedFiles,
@@ -737,11 +836,12 @@ async function runReviewForPullRequest(
       console.info(
         `[review] Approved ${params.owner}/${params.repo}#${params.pullNumber} (no actionable issues).`,
       );
-      return {
+      outcome = {
         status: "approved",
         inlineCommentCount: 0,
         hasSummaryBody: true,
       };
+      return outcome;
     }
 
     const safeOverallComment =
@@ -760,11 +860,12 @@ async function runReviewForPullRequest(
       console.info(
         `[review] No safe suggestions for ${params.owner}/${params.repo}#${params.pullNumber}`,
       );
-      return {
+      outcome = {
         status: "no_suggestions",
         inlineCommentCount: 0,
         hasSummaryBody: false,
       };
+      return outcome;
     }
 
     await createPullRequestReview({
@@ -779,16 +880,64 @@ async function runReviewForPullRequest(
     console.info(
       `[review] Posted review to ${params.owner}/${params.repo}#${params.pullNumber} with ${reviewPayload.comments.length} inline comments.`,
     );
-    return {
+    outcome = {
       status: "posted",
       inlineCommentCount: reviewPayload.comments.length,
       hasSummaryBody: Boolean(reviewPayload.body),
     };
+    return outcome;
+  } catch (error) {
+    reviewError = error;
+    throw error;
   } finally {
-    await workdirSession.cleanup();
-    console.info(
-      `[review] Finished review for ${params.owner}/${params.repo}#${params.pullNumber}`,
-    );
+    if (workdirSession) {
+      try {
+        await workdirSession.cleanup();
+      } finally {
+        console.info(
+          `[review] Finished review for ${params.owner}/${params.repo}#${params.pullNumber}`,
+        );
+      }
+    }
+
+    if (checkRunId) {
+      const finishedAt = Date.now();
+      const elapsedSeconds = Math.max(1, Math.round((finishedAt - reviewStartedAt) / 1000));
+
+      try {
+        await updateCheckRun({
+          token,
+          owner: params.owner,
+          repo: params.repo,
+          checkRunId,
+          status: "completed",
+          conclusion: mapReviewOutcomeToConclusion({
+            outcome,
+            error: reviewError,
+          }),
+          output: buildCompletedReviewingCheckOutput({
+            owner: params.owner,
+            repo: params.repo,
+            pullNumber: params.pullNumber,
+            outcome,
+            error: reviewError,
+            elapsedSeconds,
+          }),
+          completedAt: new Date(finishedAt).toISOString(),
+        });
+      } catch (error) {
+        console.warn(
+          `[review] Failed to update check run ${checkRunId} for ${params.owner}/${params.repo}#${params.pullNumber}`,
+          error,
+        );
+      }
+
+      if (reviewError) {
+        console.info(
+          `[review] Checked failure for ${params.owner}/${params.repo}#${params.pullNumber}: ${String((reviewError as Error)?.message ?? reviewError)}`,
+        );
+      }
+    }
   }
 }
 

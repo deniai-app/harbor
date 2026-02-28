@@ -45,7 +45,6 @@ async function runGitCommand(args: string[], cwd?: string): Promise<string> {
   }
 }
 
-
 async function runGitWithRetry(args: string[], cwd?: string, attempt = 1): Promise<string> {
   try {
     return await runGitCommand(args, cwd);
